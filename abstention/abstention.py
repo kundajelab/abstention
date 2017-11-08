@@ -113,8 +113,9 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
 
 class MarginalDeltaMetric(AbstainerFactory):
 
-    def __init__(self, proportion_positives):
+    def __init__(self, proportion_positives, estimate_vals_from_valid=False):
         self.proportion_positives = proportion_positives
+        self.estimate_vals_from_valid = estimate_vals_from_valid
 
     def compute_metric(self, y_true, y_score):
         raise NotImplementedError()
@@ -159,26 +160,40 @@ class MarginalDeltaMetric(AbstainerFactory):
                 sorted(validation_vals+test_posterior_and_index,
                        key=lambda x: x[0])
             pos_cdf = 0
-            neg_cdf = 0
+            neg_cdf = np.finfo(np.float32).eps
+            test_sorted_posterior_probs = []
+            test_sorted_pos_cdfs = []
+            test_sorted_neg_cdfs = []
+            test_sorted_indices = []
             to_return = np.zeros(len(posterior_probs))
             for value in sorted_valid_and_test:
                 is_from_valid = True if len(value)==3 else False 
                 if (is_from_valid):
                     pos_cdf = value[1]
-                    neg_cdf = value[2]
+                    neg_cdf = max(value[2],np.finfo(np.float32).eps)
                 else:
                     ppos = value[0]
                     idx = value[1]
-                    est_numpos =\
-                        len(posterior_probs)*self.proportion_positives
-                    est_numneg =\
-                        len(posterior_probs)*(1-self.proportion_positives)     
-                    abstention_score = self.compute_abstention_score(
-                        est_metric=est_metric,
-                        ppos=ppos, pos_cdf=pos_cdf, neg_cdf=neg_cdf,
-                        est_numpos=est_numpos, est_numneg=est_numneg)
-                    to_return[idx] = abstention_score
-            return np.array(to_return)
+                    test_sorted_posterior_probs.append(ppos)
+                    test_sorted_indices.append(idx)
+                    test_sorted_pos_cdfs.append(pos_cdf)
+                    test_sorted_neg_cdfs.append(neg_cdf)
+            test_sorted_abstention_scores = self.compute_abstention_score(
+                est_metric=est_metric,
+                est_numpos=len(posterior_probs)*self.proportion_positives,
+                est_numneg=len(posterior_probs)*(1-self.proportion_positives),
+                ppos=np.array(test_sorted_posterior_probs),
+                pos_cdfs=np.array(test_sorted_pos_cdfs),
+                neg_cdfs=np.array(test_sorted_neg_cdfs))
+
+            from matplotlib import pyplot as plt
+            plt.plot(test_sorted_posterior_probs, test_sorted_abstention_scores)
+            plt.show()
+
+            final_abstention_scores = np.zeros(len(posterior_probs)) 
+            final_abstention_scores[test_sorted_indices] =\
+                test_sorted_abstention_scores 
+            return final_abstention_scores
 
         return abstaining_func
 
@@ -188,10 +203,10 @@ class MarginalDeltaAuRoc(MarginalDeltaMetric):
     def compute_metric(self, y_true, y_score):
         return roc_auc_score(y_true=y_true, y_score=y_score)
 
-    def compute_abstention_score(self, est_metric, ppos, pos_cdf, neg_cdf,
-                                       est_numpos, est_numneg):
-        return (ppos*((est_metric - neg_cdf)/est_numpos) 
-                + (1-ppos)*((est_metric - (1-pos_cdf))/est_numneg))
+    def compute_abstention_score(self, est_metric, est_numpos, est_numneg,
+                                       ppos, pos_cdfs, neg_cdfs):
+        return (ppos*((est_metric - neg_cdfs)/est_numpos) 
+                + (1-ppos)*((est_metric - (1-pos_cdfs))/est_numneg))
 
 
 class MarginalDeltaAuPrc(MarginalDeltaMetric):
@@ -199,11 +214,20 @@ class MarginalDeltaAuPrc(MarginalDeltaMetric):
     def compute_metric(self, y_true, y_score):
         return average_precision_score(y_true=y_true, y_score=y_score)
 
-    def compute_abstention_score(self, est_metric, ppos, pos_cdf, neg_cdf,
-                                       est_numpos, est_numneg):
+    def compute_abstention_score(self, est_metric, est_numpos, est_numneg,
+                                       ppos, pos_cdfs, neg_cdfs):
         precision_at_threshold =\
-            (pos_cdf*est_numpos)/(pos_cdf*est_numpos + neg_cdf*est_numneg)
-        return ppos*(est_metric - precision_at_threshold)/est_numpos 
+            ((1-pos_cdfs)*est_numpos)/(
+             (1-pos_cdfs)*est_numpos + (1-neg_cdfs)*est_numneg)
+        slope_if_positive = (est_metric - precision_at_threshold)/est_numpos 
+        ##at a given threshold, find the slope of the boost to precision from
+        ##evicting a higher-ranked negative
+        slope_evict_higher_negative = ppos*(1-pos_cdfs)/(
+            ((1-pos_cdfs)*est_numpos + (1-neg_cdfs)*est_numneg)**2) 
+        ##take the running sum of the boost to get the total
+        ##slope of auPRC w.r.t. evicting a negative at that threshold
+        slope_if_negative = np.cumsum(slope_evict_higher_negative)
+        return slope_if_positive*ppos + slope_if_negative*(1-ppos)
 
 
 class Uncertainty(AbstainerFactory):

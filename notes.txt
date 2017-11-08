@@ -1,0 +1,54 @@
+auROC derivation
+
+expected_positives_evicted = X*ppos
+expected_negatives_evicted = X*pneg
+
+((auROC*num_pos) - P_gt*X*ppos)/(num_pos - X*ppos)
+((auROC*num_neg) - P_lt*X*pneg)/(num_neg - X*pneg)
+
+lim X-->0 of
+
+ ((auROC*num_pos) - P_gt*X*ppos)/(num_pos - X*ppos) - auROC)/X
+= ((auROC*num_pos) - P_gt*X*ppos - auROC*(num_pos - X*ppos))/((num_pos - X*ppos)*X)
+= (auROC*X*ppos - P_gt*X*ppos)/((num_pos - X*ppos)*X)
+= (auROC*ppos - P_gt*ppos)/((num_pos - X*ppos))
+
+limit as X-->0 is:
+ppos*((auROC - P_gt)/num_pos) + pneg*((auROC - P_lt)/num_neg)
+ppos*((auROC - P_gt)/num_pos) + pneg*((auROC - P_lt)/num_neg)
+
+
+Derivation for auPRC
+
+average precision score =
+    - for every positive (point on recall axis), find the probability of drawing a positive example from all examples ranked above it (precision at threshold)
+    - average over all positives
+
+- total precision score = auPRC*est_numpos
+- precision at threshold is (1-pos_cdf)*est_numpos/(
+(1-pos_cdf)*est_numpos + (1-neg_cdf)*est_numneg)
+- estimated change in precision due to evicting positives, divided by X:
+   ((auPRC*est_num_pos - X*ppos*precision_at_threshold)/(est_num_pos - X*ppos) - auPRC)/X
+ = ((auPRC*est_num_pos - X*ppos*precision_at_threshold - auPRC*(est_num_pos - X*ppos))/(X*(est_num_pos - X*ppos))
+ = (X*auPRC*ppos - X*ppos*precision_at_threshold)/(X*(est_num_pos - X*ppos))
+ = (auPRC*ppos - ppos*precision_at_threshold)/(est_num_pos - X*ppos)
+ lim X-->0 is:
+ ppos*(auPRC - precision_at_threshold)/(est_num_pos)
+
+- Now, if negatives are evicted, they change the precision score for all examples ranked AFTER it.
+- for a given positive ranked after the evicted negative:
+    - num_positives_above_threshold_before_eviction = (1-pos_cdf)*est_numpos
+    - num_negatives_above_threshold_before_eviction = (1-neg_cdf)*est_numneg
+    - num_negatives_after_eviction = (1-neg_cdf)*est_numneg - X*(1-ppos)
+    - change in precision for this positive:
+        = ((1-pos_cdf)*est_numpos)/((1-pos_cdf)*est_numpos + (1-neg_cdf)*est_numneg - X*pneg) - ((1-pos_cdf)*est_numpos)/((1-pos_cdf)*est_numpos + (1-neg_cdf)*est_numneg)
+         = ((1-pos_cdf)*est_numpos*X*pneg)/((1-pos_cdf)*est_numpos + (1-neg_cdf)*est_numneg - X*(1-pneg))
+         = ((1-pos_cdf)*est_numpos*X*pneg)/(((1-pos_cdf)*est_numpos + (1-neg_cdf)*est_numneg - X*pneg)*((1-pos_cdf)*est_numpos + (1-neg_cdf)*est_numneg))
+         -- divide by X to get marginal change, take limit as X-->0
+         = ((1-pos_cdf)*est_numpos*pneg)/(((1-pos_cdf)*est_numpos + (1-neg_cdf)*est_numneg)^2)
+         -- we have to sum this quantity over all the positives above the threshold, then divide by the total number of positives to get the total change in auPRC
+         - dividing by the total num of positives gives:
+         ((1-pos_cdf)*pneg)/(((1-pos_cdf)*est_numpos + (1-neg_cdf)*est_numneg)^2)
+         - factor out pneg as it doesn't change
+         - note that the probability that a given example with posterior probability [p] is a positive is ppos[p] (if calibrated, they are identical)
+         = pneg*[sum over all p over threshold of:] ppos[p]*(1-pos_cdf[p])/(((1-pos_cdf[p])*est_numpos + (1-neg_cdf[p])*est_numneg)^2)

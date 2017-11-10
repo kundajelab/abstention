@@ -113,7 +113,7 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
 
 class MarginalDeltaMetric(AbstainerFactory):
 
-    def __init__(self, proportion_positives, estimate_vals_from_valid=False):
+    def __init__(self, proportion_positives, estimate_vals_from_valid=True):
         self.proportion_positives = proportion_positives
         self.estimate_vals_from_valid = estimate_vals_from_valid
 
@@ -129,10 +129,10 @@ class MarginalDeltaMetric(AbstainerFactory):
 
     def __call__(self, valid_labels, valid_posterior, valid_uncert=None):
 
-        if (estimate_vals_from_valid):
+        if (self.estimate_vals_from_valid):
             #get the original auROC from the validation set
-            est_metric = self.compute_metric(y_true=valid_labels,
-                                             y_score=valid_posterior)
+            est_metric = np.array(self.compute_metric(y_true=valid_labels,
+                                             y_score=valid_posterior))
 
             #compute the cdf for the positives and the negatives
             num_positives = np.sum(valid_labels==1)
@@ -156,8 +156,9 @@ class MarginalDeltaMetric(AbstainerFactory):
             validation_vals = list(zip([x[1] for x in sorted_labels_and_probs],
                                    positives_cdf, negatives_cdf))
 
+
         def abstaining_func(posterior_probs, uncertainties=None):
-            if (estimate_vals_from_valid):
+            if (self.estimate_vals_from_valid):
                 #test_posterior_and_index have 2-tuples of prob, testing index
                 test_posterior_and_index = [(x[1], x[0]) for x in
                                             enumerate(posterior_probs)]
@@ -186,13 +187,21 @@ class MarginalDeltaMetric(AbstainerFactory):
                 est_numpos=len(posterior_probs)*self.proportion_positives
                 est_numneg=len(posterior_probs)*(1-self.proportion_positives)
             else:
-                test_sorted_posterior_probs = np.array(sorted(posterior_probs))
+                sorted_idx_and_val = sorted(enumerate(posterior_probs),
+                                            key=lambda x: x[1])
+                test_sorted_posterior_probs =\
+                    np.array([x[1] for x in sorted_idx_and_val])
+                test_sorted_indices = [x[0] for x in sorted_idx_and_val]
                 est_numpos = np.sum(test_sorted_posterior_probs)
                 est_numneg = np.sum(1-test_sorted_posterior_probs)
                 test_sorted_pos_cdfs =\
                     np.cumsum(test_sorted_posterior_probs)/est_numpos
                 test_sorted_neg_cdfs =\
                     np.cumsum(1-test_sorted_posterior_probs)/est_numneg
+                est_metric=self.estimate_metric(
+                    ppos=test_sorted_posterior_probs,
+                    pos_cdfs=test_sorted_pos_cdfs,
+                    neg_cdfs=test_sorted_neg_cdfs)
 
             test_sorted_abstention_scores = self.compute_abstention_score(
                 est_metric=est_metric,
@@ -203,6 +212,12 @@ class MarginalDeltaMetric(AbstainerFactory):
                 neg_cdfs=np.array(test_sorted_neg_cdfs))
 
             from matplotlib import pyplot as plt
+            print("metric:",est_metric)
+            print("cdfs")
+            plt.plot(test_sorted_posterior_probs, test_sorted_pos_cdfs)
+            plt.plot(test_sorted_posterior_probs, test_sorted_neg_cdfs) 
+            plt.show()
+            print("abstention scores")
             plt.plot(test_sorted_posterior_probs, test_sorted_abstention_scores)
             plt.show()
 
@@ -222,7 +237,7 @@ class MarginalDeltaAuRoc(MarginalDeltaMetric):
         est_total_positives = np.sum(ppos)
         #probability of being ranked above a randomly chosen negative
         #is just neg_cdf
-        return ppos*neg_cdf/est_total_positives
+        return np.sum(ppos*neg_cdfs)/est_total_positives
 
     def compute_metric(self, y_true, y_score):
         return roc_auc_score(y_true=y_true, y_score=y_score)
@@ -237,13 +252,13 @@ class MarginalDeltaAuPrc(MarginalDeltaMetric):
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs): 
         #average precision over all the positives
-        est_total_positives = np.sum(ppos)
-        est_total_negatives = np.sum(1-ppos)
+        num_pos = np.sum(ppos)
+        num_neg = np.sum(1-ppos)
         #num positives ranked above = (1-pos_cdfs)*num_pos
         #num negatives ranked above = (1-neg_cdfs)*num_neg
         precision_at_threshold = ((1-pos_cdfs)*num_pos)/\
                                  ((1-pos_cdfs)*num_pos + (1-neg_cdfs)*num_neg)
-        return (ppos*precision_at_threshold)/est_total_positives
+        return np.sum(ppos*precision_at_threshold)/num_pos
 
     def compute_metric(self, y_true, y_score):
         return average_precision_score(y_true=y_true, y_score=y_score)

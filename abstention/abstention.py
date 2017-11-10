@@ -217,7 +217,12 @@ class MarginalDeltaMetric(AbstainerFactory):
 class MarginalDeltaAuRoc(MarginalDeltaMetric):
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs): 
-        raise NotImplementedError()
+        #probability that a randomly chosen positive is ranked above
+        #a randomly chosen negative:
+        est_total_positives = np.sum(ppos)
+        #probability of being ranked above a randomly chosen negative
+        #is just neg_cdf
+        return ppos*neg_cdf/est_total_positives
 
     def compute_metric(self, y_true, y_score):
         return roc_auc_score(y_true=y_true, y_score=y_score)
@@ -231,7 +236,14 @@ class MarginalDeltaAuRoc(MarginalDeltaMetric):
 class MarginalDeltaAuPrc(MarginalDeltaMetric):
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs): 
-        raise NotImplementedError()
+        #average precision over all the positives
+        est_total_positives = np.sum(ppos)
+        est_total_negatives = np.sum(1-ppos)
+        #num positives ranked above = (1-pos_cdfs)*num_pos
+        #num negatives ranked above = (1-neg_cdfs)*num_neg
+        precision_at_threshold = ((1-pos_cdfs)*num_pos)/\
+                                 ((1-pos_cdfs)*num_pos + (1-neg_cdfs)*num_neg)
+        return (ppos*precision_at_threshold)/est_total_positives
 
     def compute_metric(self, y_true, y_score):
         return average_precision_score(y_true=y_true, y_score=y_score)

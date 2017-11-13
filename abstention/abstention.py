@@ -158,7 +158,6 @@ class MarginalDeltaMetric(AbstainerFactory):
 
 
         def abstaining_func(posterior_probs, uncertainties=None):
-            print(valid_est_metric)
             #test_posterior_and_index have 2-tuples of prob, testing index
             test_posterior_and_index = [(x[1], x[0]) for x in
                                         enumerate(posterior_probs)]
@@ -207,15 +206,6 @@ class MarginalDeltaMetric(AbstainerFactory):
                 ppos=np.array(test_sorted_posterior_probs),
                 pos_cdfs=np.array(test_sorted_pos_cdfs),
                 neg_cdfs=np.array(test_sorted_neg_cdfs))
-
-            from matplotlib import pyplot as plt
-            print("cdfs")
-            plt.plot(test_sorted_posterior_probs, test_sorted_pos_cdfs)
-            plt.plot(test_sorted_posterior_probs, test_sorted_neg_cdfs) 
-            plt.show()
-            print("abstention scores")
-            plt.plot(test_sorted_posterior_probs, test_sorted_abstention_scores)
-            plt.show()
 
             final_abstention_scores = np.zeros(len(posterior_probs)) 
             final_abstention_scores[test_sorted_indices] =\

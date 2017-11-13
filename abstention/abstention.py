@@ -209,7 +209,6 @@ class MarginalDeltaMetric(AbstainerFactory):
                 neg_cdfs=np.array(test_sorted_neg_cdfs))
 
             from matplotlib import pyplot as plt
-            print("metric:",est_metric)
             print("cdfs")
             plt.plot(test_sorted_posterior_probs, test_sorted_pos_cdfs)
             plt.plot(test_sorted_posterior_probs, test_sorted_neg_cdfs) 

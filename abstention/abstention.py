@@ -147,12 +147,14 @@ class MarginalDeltaMetric(AbstainerFactory):
             else:
                 running_sum_positives.append(running_sum_positives[-1])
                 running_sum_negatives.append(running_sum_negatives[-1]+1)
-        positives_cdf = np.array(running_sum_positives)/float(num_positives) 
-        negatives_cdf = np.array(running_sum_negatives)/float(num_negatives) 
+        valid_positives_cdf =\
+            np.array(running_sum_positives)/float(valid_num_positives) 
+        valid_negatives_cdf =\
+            np.array(running_sum_negatives)/float(valid_num_negatives) 
 
         #validation_vals are a 3-tuple of prob, positive_cdf, neg_cdf
         validation_vals = list(zip([x[1] for x in sorted_labels_and_probs],
-                               positives_cdf, negatives_cdf))
+                               valid_positives_cdf, valid_negatives_cdf))
 
 
         def abstaining_func(posterior_probs, uncertainties=None):
@@ -184,8 +186,6 @@ class MarginalDeltaMetric(AbstainerFactory):
                     test_sorted_neg_cdfs.append(neg_cdf)
             est_numpos_from_data = np.sum(test_sorted_posterior_probs)
             est_numneg_from_data = np.sum(1-test_sorted_posterior_probs)
-            est_numpos_from_data=len(posterior_probs)*self.proportion_positives
-            est_numneg_from_data=len(posterior_probs)*(1-self.proportion_positives)
             sorted_idx_and_val = sorted(enumerate(posterior_probs),
                                         key=lambda x: x[1])
             est_metric_from_data=self.estimate_metric(

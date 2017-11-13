@@ -197,10 +197,13 @@ class MarginalDeltaMetric(AbstainerFactory):
                 pos_cdfs=test_sorted_pos_cdfs,
                 neg_cdfs=test_sorted_neg_cdfs)
 
+            print("valid est metric", valid_est_metric)
+            print("data est metric", est_metric_from_data)
+
             test_sorted_abstention_scores = self.compute_abstention_score(
-                est_metric=est_metric,
-                est_numpos=est_numpos,
-                est_numneg=est_numneg,
+                est_metric=est_metric_from_data,
+                est_numpos=est_numpos_from_data,
+                est_numneg=est_numneg_from_data,
                 ppos=np.array(test_sorted_posterior_probs),
                 pos_cdfs=np.array(test_sorted_pos_cdfs),
                 neg_cdfs=np.array(test_sorted_neg_cdfs))

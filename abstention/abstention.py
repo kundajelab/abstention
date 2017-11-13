@@ -184,6 +184,10 @@ class MarginalDeltaMetric(AbstainerFactory):
                     test_sorted_indices.append(idx)
                     test_sorted_pos_cdfs.append(pos_cdf)
                     test_sorted_neg_cdfs.append(neg_cdf)
+            test_sorted_posterior_probs = np.array(test_sorted_posterior_probs)
+            test_sorted_pos_cdfs = np.array(test_sorted_pos_cdfs)
+            test_sorted_neg_cdfs = np.array(test_sorted_neg_cdfs)
+            
             est_numpos_from_data = np.sum(test_sorted_posterior_probs)
             est_numneg_from_data = np.sum(1-test_sorted_posterior_probs)
             sorted_idx_and_val = sorted(enumerate(posterior_probs),

@@ -3,6 +3,18 @@ import numpy as np
 from sklearn.metrics import average_precision_score, roc_auc_score
 
 
+#class basic_average_precision_score(y_true, y_score):
+#    #sort by y_score
+#    sorted_y_true, sorted_y_score = zip(*[sorted(zip(y_true, y_score),
+#                                                 key=lambda x: x[1]))
+#    num_pos = np.sum(sorted_y_true)
+#    num_neg = np.sum(1-sorted_y_true)
+#    num_pos_above = num_pos - np.cumsum(sorted_y_true)
+#    num_neg_above = num_neg - np.cumsum(1-sorted_y_true)
+#    precisions = num_pos_above/(float(num_pos_above+num_neg_above))
+#    average_precisions = sorted_y_true*precisions
+
+
 class AbstentionEval(object):
 
     def __init__(self, metric, abstention_fraction):
@@ -113,8 +125,8 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
 
 class MarginalDeltaMetric(AbstainerFactory):
 
-    def __init__(self, estimate_vals_from_valid=True):
-        self.estimate_vals_from_valid = estimate_vals_from_valid
+    def __init__(self, estimate_cdfs_from_valid=False):
+        self.estimate_cdfs_from_valid = estimate_cdfs_from_valid
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs):
         raise NotImplementedError()
@@ -189,6 +201,11 @@ class MarginalDeltaMetric(AbstainerFactory):
             
             est_numpos_from_data = np.sum(test_sorted_posterior_probs)
             est_numneg_from_data = np.sum(1-test_sorted_posterior_probs)
+            est_pos_cdfs_from_data =\
+                (np.cumsum(test_sorted_posterior_probs))/est_numpos_from_data
+            est_neg_cdfs_from_data =\
+                (np.cumsum(1-test_sorted_posterior_probs))/est_numneg_from_data
+
             sorted_idx_and_val = sorted(enumerate(posterior_probs),
                                         key=lambda x: x[1])
             est_metric_from_data=self.estimate_metric(
@@ -204,8 +221,13 @@ class MarginalDeltaMetric(AbstainerFactory):
                 est_numpos=est_numpos_from_data,
                 est_numneg=est_numneg_from_data,
                 ppos=np.array(test_sorted_posterior_probs),
-                pos_cdfs=np.array(test_sorted_pos_cdfs),
-                neg_cdfs=np.array(test_sorted_neg_cdfs))
+                pos_cdfs=(np.array(test_sorted_pos_cdfs)
+                          if self.estimate_cdfs_from_valid
+                          else est_pos_cdfs_from_data),
+                neg_cdfs=(np.array(test_sorted_neg_cdfs)
+                          if self.estimate_cdfs_from_valid
+                          else est_neg_cdfs_from_data)
+            )
 
             final_abstention_scores = np.zeros(len(posterior_probs)) 
             final_abstention_scores[test_sorted_indices] =\
@@ -254,14 +276,41 @@ class MarginalDeltaAuPrc(MarginalDeltaMetric):
         precision_at_threshold =\
             ((1-pos_cdfs)*est_numpos)/(
              (1-pos_cdfs)*est_numpos + (1-neg_cdfs)*est_numneg)
-        slope_if_positive = (est_metric - precision_at_threshold)/est_numpos 
-        ##at a given threshold, find the slope of the boost to precision from
-        ##evicting a higher-ranked negative
-        slope_evict_higher_negative = ppos*(1-pos_cdfs)/(
-            ((1-pos_cdfs)*est_numpos + (1-neg_cdfs)*est_numneg)**2) 
-        ##take the running sum of the boost to get the total
-        ##slope of auPRC w.r.t. evicting a negative at that threshold
-        slope_if_negative = np.cumsum(slope_evict_higher_negative)
+        precision_at_threshold[-1] = 1.0 #dealing with 0.0/0.0
+
+        est_nneg_above = est_numneg*(1-neg_cdfs)
+        est_npos_above = est_numpos*(1-pos_cdfs)
+
+        #mep_pos = marginal effect on precision of evicting higher
+        #ranked positive example
+        mep_pos = -ppos*est_nneg_above/np.square(est_npos_above + est_nneg_above) 
+        mep_pos[-1] = 0.0 #again dealing with 0/0
+        mep_neg = ppos*est_npos_above/np.square(est_npos_above + est_nneg_above)
+        mep_neg[-1] = 1.0 #again dealing with 0/0
+
+        cmep_pos = np.cumsum(mep_pos)
+        cmep_neg = np.cumsum(mep_neg)
+
+        #from matplotlib import pyplot as plt
+        #print("Term 1")
+        #plt.plot(ppos, est_metric-precision_at_threshold)
+        #plt.plot(ppos, ppos*(est_metric-precision_at_threshold))
+        #plt.show() 
+        #print("Term 2")
+        #print("bah",cmep_pos[-1])
+        #print(ppos[-1])
+        #plt.plot(ppos, cmep_pos)
+        #plt.plot(ppos, ppos*cmep_pos)
+        #plt.show()
+        #print("Term 3")
+        #plt.plot(ppos, cmep_neg)
+        #plt.plot(ppos, (1-ppos)*cmep_neg)
+        #plt.show()
+
+        slope_if_positive =\
+            (est_metric - precision_at_threshold + cmep_pos)/est_numpos
+        slope_if_negative = cmep_neg/est_numpos
+
         return slope_if_positive*ppos + slope_if_negative*(1-ppos)
 
 

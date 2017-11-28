@@ -1,18 +1,25 @@
 from __future__ import division, print_function, absolute_import
 import numpy as np
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import roc_auc_score
 
 
-#class basic_average_precision_score(y_true, y_score):
-#    #sort by y_score
-#    sorted_y_true, sorted_y_score = zip(*[sorted(zip(y_true, y_score),
-#                                                 key=lambda x: x[1]))
-#    num_pos = np.sum(sorted_y_true)
-#    num_neg = np.sum(1-sorted_y_true)
-#    num_pos_above = num_pos - np.cumsum(sorted_y_true)
-#    num_neg_above = num_neg - np.cumsum(1-sorted_y_true)
-#    precisions = num_pos_above/(float(num_pos_above+num_neg_above))
-#    average_precisions = sorted_y_true*precisions
+def basic_average_precision_score(y_true, y_score):
+    #sort by y_score
+    sorted_y_true, sorted_y_score = zip(*sorted(zip(y_true, y_score),
+                                                 key=lambda x: x[1]))
+    sorted_y_true = np.array(sorted_y_true)
+
+    num_pos = np.sum(sorted_y_true)
+    num_neg = np.sum(1-sorted_y_true)
+    num_pos_above = num_pos - np.cumsum(sorted_y_true)
+    num_neg_above = num_neg - np.cumsum(1-sorted_y_true)
+    num_pos_above[-1] = 1.0
+    num_neg_above[-1] = 0.0
+    precisions = num_pos_above/(num_pos_above+num_neg_above).astype("float")
+    average_precision = np.sum(sorted_y_true*precisions)/(num_pos)
+    return average_precision
+
+average_precision_score = basic_average_precision_score
 
 
 class AbstentionEval(object):
@@ -372,9 +379,10 @@ class MarginalDeltaAuPrcMixin(object):
         num_neg = np.sum(1-ppos)
         #num positives ranked above = (1-pos_cdfs)*num_pos
         #num negatives ranked above = (1-neg_cdfs)*num_neg
+        pos_cdfs[-1] = np.finfo(np.float32).eps #prevent div by 0
         precision_at_threshold = ((1-pos_cdfs)*num_pos)/\
                                  ((1-pos_cdfs)*num_pos + (1-neg_cdfs)*num_neg)
-        precision_at_threshold[-1] = 1.0 #dealing with 0.0/0.0
+        precision_at_threshold[-1] = 1.0
         return np.sum(ppos*precision_at_threshold)/num_pos
 
     def compute_metric(self, y_true, y_score):
@@ -395,11 +403,11 @@ class MarginalDeltaAuPrcMixin(object):
 
         #mep_pos = marginal effect on precision of evicting higher
         #ranked positive example
-        mep_pos = -ppos*est_nneg_above/np.square(est_npos_above + est_nneg_above) 
-        mep_neg = ppos*est_npos_above/np.square(est_npos_above + est_nneg_above)
+        mep_pos = -est_nneg_above/np.square(est_npos_above + est_nneg_above) 
+        mep_neg = est_npos_above/np.square(est_npos_above + est_nneg_above)
 
-        cmep_pos = np.cumsum(mep_pos)
-        cmep_neg = np.cumsum(mep_neg)
+        cmep_pos = np.cumsum(ppos*mep_pos)
+        cmep_neg = np.cumsum(ppos*mep_neg)
 
         slope_if_positive =\
             (est_metric - precision_at_threshold + cmep_pos)/est_numpos

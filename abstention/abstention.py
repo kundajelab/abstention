@@ -125,8 +125,10 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
 
 class MarginalDeltaMetric(AbstainerFactory):
 
-    def __init__(self, estimate_cdfs_from_valid=False):
+    def __init__(self, estimate_cdfs_from_valid=False,
+                       estimate_imbalance_from_valid=False):
         self.estimate_cdfs_from_valid = estimate_cdfs_from_valid
+        self.estimate_imbalance_from_valid = estimate_imbalance_from_valid
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs):
         raise NotImplementedError()
@@ -198,6 +200,13 @@ class MarginalDeltaMetric(AbstainerFactory):
             test_sorted_posterior_probs = np.array(test_sorted_posterior_probs)
             test_sorted_pos_cdfs = np.array(test_sorted_pos_cdfs)
             test_sorted_neg_cdfs = np.array(test_sorted_neg_cdfs)
+
+            valid_frac_pos = valid_num_positives/\
+                             (valid_num_positives+valid_num_negatives)
+            valid_frac_neg = valid_num_negatives/\
+                             (valid_num_positives+valid_num_negatives)
+            est_numpos_from_valid = valid_frac_pos*len(posterior_probs)
+            est_numneg_from_valid = valid_frac_neg*len(posterior_probs)
             
             est_numpos_from_data = np.sum(test_sorted_posterior_probs)
             est_numneg_from_data = np.sum(1-test_sorted_posterior_probs)
@@ -218,8 +227,12 @@ class MarginalDeltaMetric(AbstainerFactory):
 
             test_sorted_abstention_scores = self.compute_abstention_score(
                 est_metric=est_metric_from_data,
-                est_numpos=est_numpos_from_data,
-                est_numneg=est_numneg_from_data,
+                est_numpos=(est_numpos_from_valid if
+                            self.estimate_imbalance_from_valid
+                            else est_numpos_from_data),
+                est_numneg=(est_numneg_from_valid if
+                            self.estimate_imbalance_from_valid else
+                            est_numneg_from_data),
                 ppos=np.array(test_sorted_posterior_probs),
                 pos_cdfs=(np.array(test_sorted_pos_cdfs)
                           if self.estimate_cdfs_from_valid

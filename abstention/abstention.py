@@ -123,6 +123,82 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
         return abstaining_func
 
 
+class RecursiveMarginalDeltaMetric(AbstainerFactory):
+
+    def __init__(self, proportion_to_retain):
+        self.proportion_to_retain = proportion_to_retain
+
+    def estimate_metric(self, ppos, pos_cdfs, neg_cdfs):
+        raise NotImplementedError()
+
+    def compute_metric(self, y_true, y_score):
+        raise NotImplementedError()
+
+    def compute_abstention_score(self, est_metric, ppos, pos_cdf, neg_cdf,
+                                       est_numpos, est_numneg):
+        raise NotImplementedError()
+
+    def __call__(self, valid_labels=None,
+                       valid_posterior=None, valid_uncert=None):
+
+        def abstaining_func(posterior_probs, uncertainties=None):
+            reverse_eviction_ordering = np.zeros(len(posterior_probs))
+            #test_posterior_and_index have 2-tuples of prob, testing index
+            test_posterior_and_index = [(x[1], x[0]) for x in
+                                        enumerate(posterior_probs)]
+            test_sorted_indices, test_sorted_posterior_probs =\
+                zip(*sorted(enumerate(posterior_probs),
+                      key=lambda x: x[1]))
+            test_sorted_posterior_probs =\
+                np.array(test_sorted_posterior_probs)
+
+            items_remaining = len(posterior_probs)  
+            while items_remaining >\
+                  int(self.proportion_to_retain*len(posterior_probs)):
+                if (items_remaining%100 == 0):
+                    print("Items remaining",items_remaining)
+                est_numpos_from_data = np.sum(test_sorted_posterior_probs)
+                est_numneg_from_data = np.sum(1-test_sorted_posterior_probs)
+                est_pos_cdfs_from_data =\
+                    (np.cumsum(test_sorted_posterior_probs))/\
+                    est_numpos_from_data
+                est_neg_cdfs_from_data =\
+                    (np.cumsum(1-test_sorted_posterior_probs))/\
+                    est_numneg_from_data
+                est_metric_from_data=self.estimate_metric(
+                    ppos=test_sorted_posterior_probs,
+                    pos_cdfs=est_pos_cdfs_from_data,
+                    neg_cdfs=est_neg_cdfs_from_data)
+
+                test_sorted_abstention_scores = self.compute_abstention_score(
+                    est_metric=est_metric_from_data,
+                    est_numpos=est_numpos_from_data,
+                    est_numneg=est_numneg_from_data,
+                    ppos=test_sorted_posterior_probs,
+                    pos_cdfs=est_pos_cdfs_from_data,
+                    neg_cdfs=est_neg_cdfs_from_data)
+                to_evict_idx = max(zip(test_sorted_indices,
+                                       test_sorted_abstention_scores),
+                                   key=lambda x: x[1])[0]
+                reverse_eviction_ordering[to_evict_idx] = items_remaining  
+                items_remaining -= 1
+                idx_to_evict_from_sorted =\
+                    np.argmax(test_sorted_abstention_scores)
+                test_sorted_indices =\
+                    np.array(list(test_sorted_indices[:
+                                   idx_to_evict_from_sorted])
+                           +list(test_sorted_indices[
+                                   idx_to_evict_from_sorted+1:]))
+                test_sorted_posterior_probs =\
+                    np.array(list(test_sorted_posterior_probs[:
+                                   idx_to_evict_from_sorted])
+                         +list(test_sorted_posterior_probs[
+                                   idx_to_evict_from_sorted+1:]))
+            return reverse_eviction_ordering
+
+        return abstaining_func
+
+
 class MarginalDeltaMetric(AbstainerFactory):
 
     def __init__(self, estimate_cdfs_from_valid=False,
@@ -218,10 +294,17 @@ class MarginalDeltaMetric(AbstainerFactory):
 
             sorted_idx_and_val = sorted(enumerate(posterior_probs),
                                         key=lambda x: x[1])
-            est_metric_from_data=self.estimate_metric(
-                ppos=test_sorted_posterior_probs,
-                pos_cdfs=test_sorted_pos_cdfs,
-                neg_cdfs=test_sorted_neg_cdfs)
+
+            if (self.estimate_cdfs_from_valid):
+                est_metric_from_data=self.estimate_metric(
+                    ppos=test_sorted_posterior_probs,
+                    pos_cdfs=test_sorted_pos_cdfs,
+                    neg_cdfs=test_sorted_neg_cdfs)
+            else:
+                est_metric_from_data=self.estimate_metric(
+                    ppos=test_sorted_posterior_probs,
+                    pos_cdfs=est_pos_cdfs_from_data,
+                    neg_cdfs=est_neg_cdfs_from_data)
 
             print("valid est metric", valid_est_metric)
             print("data est metric", est_metric_from_data)
@@ -253,7 +336,7 @@ class MarginalDeltaMetric(AbstainerFactory):
         return abstaining_func
 
 
-class MarginalDeltaAuRoc(MarginalDeltaMetric):
+class MarginalDeltaAuRocMixin(object):
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs): 
         #probability that a randomly chosen positive is ranked above
@@ -272,7 +355,16 @@ class MarginalDeltaAuRoc(MarginalDeltaMetric):
                 + (1-ppos)*((est_metric - (1-pos_cdfs))/est_numneg))
 
 
-class MarginalDeltaAuPrc(MarginalDeltaMetric):
+class MarginalDeltaAuRoc(MarginalDeltaAuRocMixin, MarginalDeltaMetric):
+    pass
+
+
+class RecursiveMarginalDeltaAuRoc(MarginalDeltaAuRocMixin,
+                                  RecursiveMarginalDeltaMetric):
+    pass
+
+
+class MarginalDeltaAuPrcMixin(object):
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs): 
         #average precision over all the positives
@@ -282,6 +374,7 @@ class MarginalDeltaAuPrc(MarginalDeltaMetric):
         #num negatives ranked above = (1-neg_cdfs)*num_neg
         precision_at_threshold = ((1-pos_cdfs)*num_pos)/\
                                  ((1-pos_cdfs)*num_pos + (1-neg_cdfs)*num_neg)
+        precision_at_threshold[-1] = 1.0 #dealing with 0.0/0.0
         return np.sum(ppos*precision_at_threshold)/num_pos
 
     def compute_metric(self, y_true, y_score):
@@ -296,38 +389,32 @@ class MarginalDeltaAuPrc(MarginalDeltaMetric):
 
         est_nneg_above = est_numneg*(1-neg_cdfs)
         est_npos_above = est_numpos*(1-pos_cdfs)
+        #to prevent 0/0:
+        est_npos_above[-1] = 1.0
+        est_nneg_above[-1] = 0.0
 
         #mep_pos = marginal effect on precision of evicting higher
         #ranked positive example
         mep_pos = -ppos*est_nneg_above/np.square(est_npos_above + est_nneg_above) 
-        mep_pos[-1] = 0.0 #again dealing with 0/0
         mep_neg = ppos*est_npos_above/np.square(est_npos_above + est_nneg_above)
-        mep_neg[-1] = 1.0 #again dealing with 0/0
 
         cmep_pos = np.cumsum(mep_pos)
         cmep_neg = np.cumsum(mep_neg)
-
-        #from matplotlib import pyplot as plt
-        #print("Term 1")
-        #plt.plot(ppos, est_metric-precision_at_threshold)
-        #plt.plot(ppos, ppos*(est_metric-precision_at_threshold))
-        #plt.show() 
-        #print("Term 2")
-        #print("bah",cmep_pos[-1])
-        #print(ppos[-1])
-        #plt.plot(ppos, cmep_pos)
-        #plt.plot(ppos, ppos*cmep_pos)
-        #plt.show()
-        #print("Term 3")
-        #plt.plot(ppos, cmep_neg)
-        #plt.plot(ppos, (1-ppos)*cmep_neg)
-        #plt.show()
 
         slope_if_positive =\
             (est_metric - precision_at_threshold + cmep_pos)/est_numpos
         slope_if_negative = cmep_neg/est_numpos
 
         return slope_if_positive*ppos + slope_if_negative*(1-ppos)
+
+
+class MarginalDeltaAuPrc(MarginalDeltaAuPrcMixin, MarginalDeltaMetric):
+    pass
+
+
+class RecursiveMarginalDeltaAuPrc(MarginalDeltaAuPrcMixin,
+                                  RecursiveMarginalDeltaMetric):
+    pass
 
 
 class Uncertainty(AbstainerFactory):

@@ -126,9 +126,10 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
 class MarginalDeltaMetric(AbstainerFactory):
 
     def __init__(self, estimate_cdfs_from_valid=False,
-                       estimate_imbalance_from_valid=False):
+                       estimate_imbalance_and_perf_from_valid=False):
         self.estimate_cdfs_from_valid = estimate_cdfs_from_valid
-        self.estimate_imbalance_from_valid = estimate_imbalance_from_valid
+        self.estimate_imbalance_and_perf_from_valid =\
+             estimate_imbalance_and_perf_from_valid
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs):
         raise NotImplementedError()
@@ -226,12 +227,14 @@ class MarginalDeltaMetric(AbstainerFactory):
             print("data est metric", est_metric_from_data)
 
             test_sorted_abstention_scores = self.compute_abstention_score(
-                est_metric=est_metric_from_data,
+                est_metric=(valid_est_metric if
+                            self.estimate_imbalance_and_perf_from_valid
+                            else est_metric_from_data),
                 est_numpos=(est_numpos_from_valid if
-                            self.estimate_imbalance_from_valid
+                            self.estimate_imbalance_and_perf_from_valid
                             else est_numpos_from_data),
                 est_numneg=(est_numneg_from_valid if
-                            self.estimate_imbalance_from_valid else
+                            self.estimate_imbalance_and_perf_from_valid else
                             est_numneg_from_data),
                 ppos=np.array(test_sorted_posterior_probs),
                 pos_cdfs=(np.array(test_sorted_pos_cdfs)

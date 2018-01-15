@@ -69,9 +69,9 @@ def obtain_posterior_probs_and_uncert_estimates(
     transform_name_to_test_uncert = OrderedDict()
     for transform_name, transform_func in uncert_transform_funcs.items():
         transform_name_to_valid_uncert[transform_name] =\
-            np.std(np.array([transform_func(x) for x in valid_dropout_preacts]),axis=0)
+            np.std(np.array([transform_func(x) for x in valid_dropout_preacts]), axis=0, ddof=1)
         transform_name_to_test_uncert[transform_name] =\
-            np.std(np.array([transform_func(x) for x in test_dropout_preacts]),axis=0) 
+            np.std(np.array([transform_func(x) for x in test_dropout_preacts]), axis=0, ddof=1) 
 
     return (cb_method_name_to_valid_posterior_prob,
             cb_method_name_to_test_posterior_prob,

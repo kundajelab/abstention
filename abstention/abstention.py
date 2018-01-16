@@ -116,6 +116,16 @@ class AbstainerFactory(object):
         raise NotImplementedError()
 
 
+class RandomAbstention(AbstainerFactory):
+
+    def __call__(self, valid_labels=None, valid_posterior=None,
+                       valid_uncert=None):
+
+        def random_func(posterior_probs, uncertainties=None):
+            return np.random.permutation(xrange(len(posterior_probs)))
+        return random_func
+
+
 class NegPosteriorDistanceFromThreshold(AbstainerFactory):
 
     def __init__(self, threshold_finder):

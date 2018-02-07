@@ -353,7 +353,20 @@ class MarginalDeltaMetric(AbstainerFactory):
         return abstaining_func
 
 
-class MarginalDeltaAuRocMixin(object):
+class AbstractMarginalDeltaMetricMixin(object):
+
+    def estimate_metric(self, ppos, pos_cdfs, neg_cdfs):
+        raise NotImplementedError()
+
+    def compute_metric(self, y_true, y_score):
+        raise NotImplementedError()
+
+    def compute_abstention_score(self, est_metric, est_numpos, est_numneg,
+                                       ppos, pos_cdfs, neg_cdfs):
+        raise NotImplementedError()
+
+
+class MarginalDeltaAuRocMixin(AbstractMarginalDeltaMetricMixin):
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs): 
         #probability that a randomly chosen positive is ranked above
@@ -381,7 +394,7 @@ class RecursiveMarginalDeltaAuRoc(MarginalDeltaAuRocMixin,
     pass
 
 
-class MarginalDeltaAuPrcMixin(object):
+class MarginalDeltaAuPrcMixin(AbstractMarginalDeltaMetricMixin):
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs): 
         #average precision over all the positives
@@ -400,6 +413,8 @@ class MarginalDeltaAuPrcMixin(object):
 
     def compute_abstention_score(self, est_metric, est_numpos, est_numneg,
                                        ppos, pos_cdfs, neg_cdfs):
+        pos_cdfs[-1] = -1.0 #prevent 0.0 warning
+        neg_cdfs[-1] = -1.0
         precision_at_threshold =\
             ((1-pos_cdfs)*est_numpos)/(
              (1-pos_cdfs)*est_numpos + (1-neg_cdfs)*est_numneg)

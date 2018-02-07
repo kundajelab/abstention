@@ -8,6 +8,6 @@ if __name__== '__main__':
           version='0.1',
           packages=['abstention'],
           setup_requires=[],
-          install_requires=['numpy>=1.9', 'keras>=1.0'],
+          install_requires=['numpy>=1.9'],
           scripts=[],
           name='abstention')

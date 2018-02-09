@@ -41,3 +41,27 @@ class PlattScaling(CalibratorFactory):
             return lr.predict_proba(preact.reshape(-1,1))[:,1]
     
         return calibration_func
+
+
+class IsotonicRegression(CalibratorFactory):
+
+    def __init__(self, verbose=True):
+        self.verbose = verbose 
+
+    def __call__(self, valid_preacts, valid_labels):
+        ir = IR()
+        valid_preacts = valid_preacts.flatten()
+        min_valid_preact = np.min(valid_preacts)
+        max_valid_preact = np.max(valid_preacts)
+        assert len(valid_preacts)==len(valid_labels)
+        #sorting to be safe...I think weird results can happen when unsorted
+        sorted_valid_preacts, sorted_valid_labels = zip(
+            *sorted(zip(valid_preacts, valid_labels), key=lambda x: x[0]))
+        y = ir.fit_transform(sorted_valid_preacts, sorted_valid_labels)
+    
+        def calibration_func(preact):
+            preact = np.minimum(preact, max_valid_preact)
+            preact = np.maximum(preact, min_valid_preact)
+            return ir.transform(preact.flatten())
+
+        return calibration_func

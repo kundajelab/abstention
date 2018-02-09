@@ -325,6 +325,12 @@ class MarginalDeltaMetric(AbstainerFactory):
 
             print("valid est metric", valid_est_metric)
             print("data est metric", est_metric_from_data)
+            print("Difference is:",est_metric_from_data-valid_est_metric)
+            if (np.abs(est_metric_from_data-valid_est_metric) > 0.02):
+                print("If the perf on the validation set is "
+                      "very different from the estimated perf "
+                      "on the test data, it may be a sign that "
+                      "the calibration is poor!!!") 
 
             test_sorted_abstention_scores = self.compute_abstention_score(
                 est_metric=(valid_est_metric if

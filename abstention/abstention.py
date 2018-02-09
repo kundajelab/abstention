@@ -428,17 +428,26 @@ class MarginalDeltaAuPrcMixin(AbstractMarginalDeltaMetricMixin):
 
         #mep_pos = marginal effect on precision of evicting higher
         #ranked positive example
-        mep_pos = -est_nneg_above/np.square(est_npos_above + est_nneg_above) 
-        mep_neg = est_npos_above/np.square(est_npos_above + est_nneg_above)
+        #mep_pos = -est_nneg_above/np.square(est_npos_above + est_nneg_above) 
+        #mep_neg = est_npos_above/np.square(est_npos_above + est_nneg_above)
+        #cmep_pos = np.cumsum(ppos*mep_pos)
+        #cmep_neg = np.cumsum(ppos*mep_neg)
 
-        cmep_pos = np.cumsum(ppos*mep_pos)
-        cmep_neg = np.cumsum(ppos*mep_neg)
+        #slope_if_positive =\
+        #    (est_metric - precision_at_threshold + cmep_pos)/est_numpos
+        #slope_if_negative = cmep_neg/est_numpos
 
-        slope_if_positive =\
-            (est_metric - precision_at_threshold + cmep_pos)/est_numpos
-        slope_if_negative = cmep_neg/est_numpos
+        #return slope_if_positive*ppos + slope_if_negative*(1-ppos)
 
-        return slope_if_positive*ppos + slope_if_negative*(1-ppos)
+        mcpr_term1 = est_npos_above/np.square(est_npos_above + est_nneg_above)
+        cmcpr_term1 = np.cumsum(ppos*mcpr_term1)
+        mcpr_term2 = -1.0/(est_npos_above + est_nneg_above)
+        cmcpr_term2 = np.cumsum(ppos*mcpr_term2)*ppos
+        slope = (ppos*(est_metric - precision_at_threshold)
+                 + cmcpr_term1 + cmcpr_term2)/est_numpos
+
+        return slope
+
 
 
 class MarginalDeltaAuPrc(MarginalDeltaAuPrcMixin, MarginalDeltaMetric):

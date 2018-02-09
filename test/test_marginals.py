@@ -48,7 +48,7 @@ class TestMarginals(unittest.TestCase):
                                                    key=lambda x: x[1])]
         spearman_corr = scipy.stats.mstats.spearmanr(abstention_scores, empirical_scores)
         print(spearman_corr)
-        assert spearman_corr > 0.99
+        assert spearman_corr.correlation > 0.99
 
     def test_marginal_auroc(self): 
         self.apply_marginals_eval(

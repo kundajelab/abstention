@@ -1,6 +1,7 @@
 from __future__ import division, print_function, absolute_import
 import numpy as np
 from sklearn.metrics import roc_auc_score
+import sys
 
 
 def basic_average_precision_score(y_true, y_score):
@@ -24,32 +25,32 @@ average_precision_score = basic_average_precision_score
 
 class AbstentionEval(object):
 
-    def __init__(self, metric, abstention_fraction):
+    def __init__(self, metric, proportion_to_retain):
         self.metric = metric
-        self.abstention_fraction = abstention_fraction
+        self.proportion_to_retain = proportion_to_retain
 
     def __call__(self, abstention_scores, y_true, y_score):
         #lower abstention score means KEEP
         indices = np.argsort(abstention_scores)[
-                    :int(np.ceil(len(y_true)*self.abstention_fraction))] 
+                    :int(np.ceil(len(y_true)*self.proportion_to_retain))] 
         return self.metric(y_true=y_true[indices],
                            y_score=y_score[indices])
 
 
 class AuPrcAbstentionEval(AbstentionEval):
 
-    def __init__(self, abstention_fraction):
+    def __init__(self, proportion_to_retain):
         super(AuPrcAbstentionEval, self).__init__(
             metric=average_precision_score,
-            abstention_fraction=abstention_fraction)
+            proportion_to_retain=proportion_to_retain)
 
 
 class AuRocAbstentionEval(AbstentionEval):
 
-    def __init__(self, abstention_fraction):
+    def __init__(self, proportion_to_retain):
         super(AuRocAbstentionEval, self).__init__(
             metric=roc_auc_score,
-            abstention_fraction=abstention_fraction)
+            proportion_to_retain=proportion_to_retain)
     
 
 class ThresholdFinder(object):
@@ -99,6 +100,7 @@ class OptimalF1(ThresholdFinder):
                 best_score = score   
         if (self.verbose):
             print("Threshold is",best_threshold)
+            sys.stdout.flush()
         return best_threshold 
 
 
@@ -173,7 +175,11 @@ class RecursiveMarginalDeltaMetric(AbstainerFactory):
             while items_remaining >\
                   int(self.proportion_to_retain*len(posterior_probs)):
                 if (items_remaining%100 == 0):
-                    print("Items remaining",items_remaining)
+                    print("Items recursively evicted:",
+                      (len(posterior_probs)-items_remaining),
+                       "of",len(posterior_probs)-
+                       int(self.proportion_to_retain*len(posterior_probs)))
+                    sys.stdout.flush()
                 est_numpos_from_data = np.sum(test_sorted_posterior_probs)
                 est_numneg_from_data = np.sum(1-test_sorted_posterior_probs)
                 est_pos_cdfs_from_data =\
@@ -325,12 +331,13 @@ class MarginalDeltaMetric(AbstainerFactory):
 
             print("valid est metric", valid_est_metric)
             print("data est metric", est_metric_from_data)
-            print("Difference is:",est_metric_from_data-valid_est_metric)
-            if (np.abs(est_metric_from_data-valid_est_metric) > 0.02):
+            sys.stdout.flush()
+            if (np.abs(est_metric_from_data-valid_est_metric) > 0.01):
                 print("If the perf on the validation set is "
                       "very different from the estimated perf "
                       "on the test data, it may be a sign that "
                       "the calibration is poor!!!") 
+                sys.stdout.flush()
 
             test_sorted_abstention_scores = self.compute_abstention_score(
                 est_metric=(valid_est_metric if
@@ -537,3 +544,4 @@ def find_best_mixing_coef(evaluation_func, scores1, scores2, stepsize):
             best_objective = objective 
             best_a = a
     return best_a
+

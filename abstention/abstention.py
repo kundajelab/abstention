@@ -24,32 +24,32 @@ average_precision_score = basic_average_precision_score
 
 class AbstentionEval(object):
 
-    def __init__(self, metric, abstention_fraction):
+    def __init__(self, metric, proportion_to_retain):
         self.metric = metric
-        self.abstention_fraction = abstention_fraction
+        self.proportion_to_retain = proportion_to_retain
 
     def __call__(self, abstention_scores, y_true, y_score):
         #lower abstention score means KEEP
         indices = np.argsort(abstention_scores)[
-                    :int(np.ceil(len(y_true)*self.abstention_fraction))] 
+                    :int(np.ceil(len(y_true)*self.proportion_to_retain))] 
         return self.metric(y_true=y_true[indices],
                            y_score=y_score[indices])
 
 
 class AuPrcAbstentionEval(AbstentionEval):
 
-    def __init__(self, abstention_fraction):
+    def __init__(self, proportion_to_retain):
         super(AuPrcAbstentionEval, self).__init__(
             metric=average_precision_score,
-            abstention_fraction=abstention_fraction)
+            proportion_to_retain=proportion_to_retain)
 
 
 class AuRocAbstentionEval(AbstentionEval):
 
-    def __init__(self, abstention_fraction):
+    def __init__(self, proportion_to_retain):
         super(AuRocAbstentionEval, self).__init__(
             metric=roc_auc_score,
-            abstention_fraction=abstention_fraction)
+            proportion_to_retain=proportion_to_retain)
     
 
 class ThresholdFinder(object):

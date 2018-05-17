@@ -1,22 +1,23 @@
 from __future__ import division, print_function, absolute_import
 import numpy as np
 from sklearn.metrics import roc_auc_score
+#from sklearn.metrics import average_precision_score
 import sys
 
 
 def basic_average_precision_score(y_true, y_score):
+    y_true = y_true.squeeze()
     #sort by y_score
     sorted_y_true, sorted_y_score = zip(*sorted(zip(y_true, y_score),
                                                  key=lambda x: x[1]))
-    sorted_y_true = np.array(sorted_y_true)
-
+    sorted_y_true = np.array(sorted_y_true).astype("float64")
     num_pos = np.sum(sorted_y_true)
     num_neg = np.sum(1-sorted_y_true)
     num_pos_above = num_pos - np.cumsum(sorted_y_true)
     num_neg_above = num_neg - np.cumsum(1-sorted_y_true)
     num_pos_above[-1] = 1.0
     num_neg_above[-1] = 0.0
-    precisions = num_pos_above/(num_pos_above+num_neg_above).astype("float")
+    precisions = num_pos_above/(num_pos_above+num_neg_above).astype("float64")
     average_precision = np.sum(sorted_y_true*precisions)/(num_pos)
     return average_precision
 

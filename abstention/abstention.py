@@ -119,6 +119,63 @@ class AbstainerFactory(object):
         raise NotImplementedError()
 
 
+class MulticlassWrapper(AbstainerFactory):
+
+    def __init__(self, single_class_abstainer_factory, verbose=True):
+        self.single_class_abstainer_factory = single_class_abstainer_factory
+        self.verbose = verbose
+
+    def __call__(self, valid_labels, valid_posterior, valid_uncert):
+
+        all_class_abstainers = []
+        for class_idx in range(valid_labels.shape[1]):
+
+            if (valid_labels is not None):
+                class_valid_labels = valid_labels[:, class_idx] 
+            else:
+                class_valid_labels = None 
+
+            if (valid_posterior is not None):
+                class_valid_posterior = valid_posterior[:, class_idx]
+            else:
+                class_valid_posterior = None
+
+            if (valid_uncert is not None):
+                class_valid_uncert = valid_uncert[:, class_idx]
+            else:
+                class_valid_uncert = None
+           
+            class_abstainer = self.single_class_abstainer_factory(
+                                        valid_labels=class_valid_labels,
+                                        valid_posterior=class_valid_posterior,
+                                        valid_uncert=class_valid_uncert) 
+            all_class_abstainers.append(class_abstainer)
+
+        def func(posterior_probs, uncertainties):
+
+            all_class_scores = []
+
+            for class_idx in range(posterior_probs.shape[1]):
+
+                if (posterior_probs is not None):
+                    class_posterior_probs = posterior_probs[:,class_idx]
+                else:
+                    class_posterior_probs = None
+
+                if (uncertainties is not None):
+                    class_uncertainties = uncertainties[:, class_idx]
+                else:
+                    class_uncertainties = None
+
+                class_scores = all_class_abstainers[class_idx](
+                                 posterior_probs=class_posterior_probs,
+                                 uncertainties=class_uncertainties)
+                all_class_scores.append(class_scores)
+            return np.array(all_class_scores).transpose((1,0))
+
+        return func
+            
+
 class RandomAbstention(AbstainerFactory):
 
     def __call__(self, valid_labels=None, valid_posterior=None,

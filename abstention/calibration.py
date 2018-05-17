@@ -5,14 +5,132 @@ from sklearn.metrics import brier_score_loss
 from sklearn.metrics import log_loss
 import scipy
 from scipy.special import expit
+import scipy.misc
+import scipy.optimize
 from sklearn.isotonic import IsotonicRegression as IR
 from sklearn.linear_model import LogisticRegression as LR
+
+
+def softmax(preact, temp):
+    exponents = np.exp(preact/temp)
+    sum_exponents = np.sum(exponents, axis=1) 
+    return exponents/sum_exponents[:,None]
+
+
+#based on https://github.com/gpleiss/temperature_scaling/blob/master/temperature_scaling.py#L78
+def compute_ece(softmax_out, labels, bins):
+
+    bin_boundaries = np.linspace(0,1,num=bins)
+    bin_lowers = bin_boundaries[:-1]
+    bin_uppers = bin_boundaries[1:]
+
+    confidences = np.max(softmax_out,axis=1)
+    is_correct = np.argmax(softmax_out,axis=1)==np.argmax(labels,axis=1)
+
+    ece = 0.0 
+    for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
+        in_bin = (confidences > bin_lower)*(confidences <= bin_upper)
+        prop_in_bin = np.mean((in_bin)) 
+        if (prop_in_bin > 0.0):
+            accuracy_in_bin = np.mean(is_correct[in_bin])
+            avg_confidence_in_bin = np.mean(confidences[in_bin])
+            ece += np.abs(avg_confidence_in_bin-accuracy_in_bin)*prop_in_bin
+    return ece*100
 
 
 class CalibratorFactory(object):
 
     def __call__(self, valid_preacts, valid_labels):
         raise NotImplementedError()
+
+
+class Softmax(CalibratorFactory):
+
+    def __call__(self, valid_preacts=None, valid_labels=None):
+        return (lambda x: softmax(preact=x, temp=1.0))
+
+
+class TempScaling(CalibratorFactory):
+
+    def __init__(self, ece_bins=15, lbfgs_kwargs={}, verbose=True):
+        self.lbfgs_kwargs = lbfgs_kwargs
+        self.verbose = verbose
+        self.ece_bins = ece_bins
+
+    def __call__(self, valid_preacts, valid_labels):
+
+        assert np.max(np.sum(valid_labels,axis=1)==1.0)
+
+        #calculate the temperature scaling parameter
+        def eval_func(x):
+            x = x[0]
+            temp_scaled_valid_preacts = valid_preacts/float(x)
+            log_sum_exp = scipy.misc.logsumexp(a = temp_scaled_valid_preacts) 
+
+            exp_result = np.exp(temp_scaled_valid_preacts)
+            sum_exp = np.sum(exp_result, axis=1)
+            sum_preact_times_exp = np.sum(valid_preacts*
+                                          exp_result, axis=1)
+
+            logits_that_matter =\
+                np.sum(valid_preacts*valid_labels, axis=1)
+            
+            log_likelihoods = logits_that_matter/float(x) - log_sum_exp
+            nll = -np.mean(log_likelihoods)
+            grads = ((sum_preact_times_exp/sum_exp - logits_that_matter)/\
+                     (float(x)**2))
+            mean_grad = -np.mean(grads)
+            return nll, np.array([mean_grad])
+
+        def eval_fprime(x):
+            x = x[0]
+            temp_scaled_valid_preacts = valid_preacts/float(x)
+            log_sum_exp = scipy.misc.logsumexp(a = temp_scaled_valid_preacts) 
+
+            exp_result = np.exp(temp_scaled_valid_preacts)
+            sum_exp = np.sum(exp_result, axis=1)
+            sum_preact_times_exp = np.sum(temp_scaled_valid_preacts*
+                                          exp_result, axis=1)
+
+            logits_that_matter =\
+                np.sum(valid_preacts*valid_labels, axis=1)
+            
+            log_likelihoods = logits_that_matter/float(x) - log_sum_exp
+            nll = np.mean(log_likelihoods)
+            grads = ((sum_exp/sum_preact_times_exp - logits_that_matter)/\
+                     (float(x)**2))
+            mean_grad = -np.mean(grads)
+
+            return np.array([mean_grad])
+
+        if (self.verbose):
+            original_nll = eval_func(np.array([1.0])) 
+            original_ece = compute_ece(
+                softmax_out=softmax(preact=valid_preacts, temp=1.0),
+                labels=valid_labels, bins=self.ece_bins) 
+            print("Original NLL & grad is: ",original_nll)
+            print("Original ECE is: ",original_ece)
+            
+        optimization_result = scipy.optimize.minimize(fun=eval_func,
+                                  x0=np.array([1.0]),
+                                  bounds=[(0,None)],
+                                  jac=True,
+                                  method='L-BFGS-B',
+                                  tol=1e-07,
+                                  **self.lbfgs_kwargs)
+        if (self.verbose):
+            print(optimization_result)
+        optimal_t = optimization_result.x
+
+        if (self.verbose):
+            final_nll = eval_func(np.array([optimal_t])) 
+            final_ece = compute_ece(
+                softmax_out=softmax(preact=valid_preacts, temp=optimal_t),
+                labels=valid_labels, bins=self.ece_bins) 
+            print("Final NLL & grad is: ",final_nll)
+            print("Final ECE is: ",final_ece)
+
+        return (lambda x: softmax(preact=x, temp=optimal_t))
 
 
 class Expit(CalibratorFactory):

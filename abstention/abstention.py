@@ -598,7 +598,7 @@ def find_best_mixing_coef(evaluation_func, scores1, scores2, stepsize):
         b = 1.0 - a
         scores = a*scores1 + b*scores2
         objective = evaluation_func(scores) 
-        if (objective > best_objective or best_objective is None):
+        if (best_objective is None or objective > best_objective):
             best_objective = objective 
             best_a = a
     return best_a

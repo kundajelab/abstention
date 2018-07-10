@@ -182,7 +182,7 @@ class RandomAbstention(AbstainerFactory):
                        valid_uncert=None):
 
         def random_func(posterior_probs, uncertainties=None):
-            return np.random.permutation(xrange(len(posterior_probs)))
+            return np.random.permutation(range(len(posterior_probs)))
         return random_func
 
 

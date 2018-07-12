@@ -182,7 +182,8 @@ class RandomAbstention(AbstainerFactory):
                        valid_uncert=None):
 
         def random_func(posterior_probs, uncertainties=None):
-            return np.random.permutation(range(len(posterior_probs)))
+            return np.random.permutation(range(len(posterior_probs)))/(
+                     len(posterior_probs))
         return random_func
 
 
@@ -283,7 +284,12 @@ class RecursiveMarginalDeltaMetric(AbstainerFactory):
 class MarginalDeltaMetric(AbstainerFactory):
 
     def __init__(self, estimate_cdfs_from_valid=False,
-                       estimate_imbalance_and_perf_from_valid=False):
+                       estimate_imbalance_and_perf_from_valid=False,
+                       all_estimates_from_valid=False):
+        self.all_estimates_from_valid = all_estimates_from_valid
+        if (self.all_estimates_from_valid):
+            estimate_cdfs_from_valid = True
+            estimate_imbalance_and_perf_from_valid = True
         self.estimate_cdfs_from_valid = estimate_cdfs_from_valid
         self.estimate_imbalance_and_perf_from_valid =\
              estimate_imbalance_and_perf_from_valid
@@ -299,6 +305,9 @@ class MarginalDeltaMetric(AbstainerFactory):
         raise NotImplementedError()
 
     def __call__(self, valid_labels, valid_posterior, valid_uncert=None):
+
+        if (self.all_estimates_from_valid):
+            print("Estimating everything relative to validation set")
 
         #get the original auROC from the validation set
         valid_est_metric = np.array(self.compute_metric(
@@ -363,8 +372,12 @@ class MarginalDeltaMetric(AbstainerFactory):
                              (valid_num_positives+valid_num_negatives)
             valid_frac_neg = valid_num_negatives/\
                              (valid_num_positives+valid_num_negatives)
-            est_numpos_from_valid = valid_frac_pos*len(posterior_probs)
-            est_numneg_from_valid = valid_frac_neg*len(posterior_probs)
+            if (self.all_estimates_from_valid):
+                est_numpos_from_valid = valid_num_positives
+                est_numneg_from_valid = valid_num_negatives
+            else:
+                est_numpos_from_valid = valid_frac_pos*len(posterior_probs)
+                est_numneg_from_valid = valid_frac_neg*len(posterior_probs)
             
             est_numpos_from_data = np.sum(test_sorted_posterior_probs)
             est_numneg_from_data = np.sum(1-test_sorted_posterior_probs)

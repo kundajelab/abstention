@@ -201,6 +201,27 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
         return abstaining_func
 
 
+class NegativeAbsLogLikelihoodRatio(AbstainerFactory):
+
+    def __call__(self, valid_labels, valid_posterior, valid_uncert=None):
+
+        p_pos = np.sum(valid_labels)/len(valid_labels)
+        assert p_pos > 0 and p_pos < 1.0, "only one class in labels"
+        #lpr = log posterior ratio
+        lpr = np.log(p_pos) - np.log(1-p_pos)
+
+        def abstaining_func(posterior_probs, uncertainties=None):
+            #llr = log-likelihood ratio
+            # prob = 1/(1 + e^-(llr + lpr))
+            # (1+e^-(llr + lpr)) = 1/prob
+            # e^-(llr + lpr) = 1/prob - 1
+            # llr + lpr = -np.log(1/prob - 1)
+            # llr = -np.log(1/prob - 1) - lpr
+            llr = -np.log(1/(max(posterior_probs,1e-7)) - 1) - lpr
+            return -np.abs(llr)
+        return abstaining_func
+
+
 class RecursiveMarginalDeltaMetric(AbstainerFactory):
 
     def __init__(self, proportion_to_retain):

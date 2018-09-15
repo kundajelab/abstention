@@ -242,7 +242,8 @@ class NegativeAbsLogLikelihoodRatio(AbstainerFactory):
             # e^-(llr + lpr) = 1/prob - 1
             # llr + lpr = -np.log(1/prob - 1)
             # llr = -np.log(1/prob - 1) - lpr
-            llr = -np.log(1/(max(posterior_probs,1e-7)) - 1) - lpr
+            np.clip(posterior_probs, a_min=1e-7, a_max=None, out=posterior_probs)
+            llr = -np.log(1/(posterior_probs) - 1) - lpr
             return -np.abs(llr)
         return abstaining_func
 

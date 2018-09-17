@@ -109,7 +109,9 @@ class AbstainerFactory(object):
 
     def __call__(self, valid_labels,
                        valid_posterior,
-                       valid_uncert):
+                       valid_uncert,
+                       train_embeddings,
+                       train_labels):
         """
             Inputs: validation set labels, posterior probs, uncertainties
             Returns: a function that accepts posterior probs and
@@ -125,7 +127,11 @@ class MulticlassWrapper(AbstainerFactory):
         self.single_class_abstainer_factory = single_class_abstainer_factory
         self.verbose = verbose
 
-    def __call__(self, valid_labels, valid_posterior, valid_uncert):
+    def __call__(self, valid_labels,
+                       valid_posterior,
+                       valid_uncert,
+                       train_embeddings,
+                       train_labels):
 
         all_class_abstainers = []
         for class_idx in range(valid_labels.shape[1]):
@@ -144,11 +150,22 @@ class MulticlassWrapper(AbstainerFactory):
                 class_valid_uncert = valid_uncert[:, class_idx]
             else:
                 class_valid_uncert = None
+
+            if (train_embeddings is not None):
+                class_train_embeddings = train_embeddings[:, class_idx]
+            else:
+                class_train_embeddings = None
+
+            if (train_labels is not None):
+                class_train_labels = train_labels[:, class_idx]
+            else:
+                class_train_labels = None
            
             class_abstainer = self.single_class_abstainer_factory(
-                                        valid_labels=class_valid_labels,
-                                        valid_posterior=class_valid_posterior,
-                                        valid_uncert=class_valid_uncert) 
+                                    valid_labels=class_valid_labels,
+                                    valid_posterior=class_valid_posterior,
+                                    train_embeddings=class_train_embeddings,
+                                    train_labels=class_train_labels) 
             all_class_abstainers.append(class_abstainer)
 
         def func(posterior_probs, uncertainties):
@@ -179,7 +196,8 @@ class MulticlassWrapper(AbstainerFactory):
 class RandomAbstention(AbstainerFactory):
 
     def __call__(self, valid_labels=None, valid_posterior=None,
-                       valid_uncert=None):
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
 
         def random_func(posterior_probs, uncertainties=None):
             return np.random.permutation(range(len(posterior_probs)))/(
@@ -192,25 +210,32 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
     def __init__(self, threshold_finder):
         self.threshold_finder = threshold_finder
 
-    def __call__(self, valid_labels, valid_posterior, valid_uncert=None):
+    def __call__(self, valid_labels, valid_posterior,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
 
         threshold = self.threshold_finder(valid_labels, valid_posterior)
 
-        def abstaining_func(posterior_probs, uncertainties=None):
+        def abstaining_func(posterior_probs,
+                            uncertainties=None, embeddings=None):
             return -np.abs(posterior_probs-threshold) 
         return abstaining_func
 
 
 class NegativeAbsLogLikelihoodRatio(AbstainerFactory):
 
-    def __call__(self, valid_labels, valid_posterior, valid_uncert=None):
+    def __call__(self, valid_labels, valid_posterior,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
 
         p_pos = np.sum(valid_labels)/len(valid_labels)
         assert p_pos > 0 and p_pos < 1.0, "only one class in labels"
         #lpr = log posterior ratio
         lpr = np.log(p_pos) - np.log(1-p_pos)
 
-        def abstaining_func(posterior_probs, uncertainties=None):
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
             #llr = log-likelihood ratio
             # prob = 1/(1 + e^-(llr + lpr))
             # (1+e^-(llr + lpr)) = 1/prob
@@ -239,9 +264,14 @@ class RecursiveMarginalDeltaMetric(AbstainerFactory):
         raise NotImplementedError()
 
     def __call__(self, valid_labels=None,
-                       valid_posterior=None, valid_uncert=None):
+                       valid_posterior=None,
+                       valid_uncert=None,
+                       train_embeddings=None,
+                       train_labels=None):
 
-        def abstaining_func(posterior_probs, uncertainties=None):
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
             reverse_eviction_ordering = np.zeros(len(posterior_probs))
             #test_posterior_and_index have 2-tuples of prob, testing index
             test_posterior_and_index = [(x[1], x[0]) for x in
@@ -326,7 +356,9 @@ class MarginalDeltaMetric(AbstainerFactory):
                                        est_numpos, est_numneg):
         raise NotImplementedError()
 
-    def __call__(self, valid_labels, valid_posterior, valid_uncert=None):
+    def __call__(self, valid_labels, valid_posterior,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
 
         if (self.all_estimates_from_valid):
             print("Estimating everything relative to validation set")
@@ -360,7 +392,9 @@ class MarginalDeltaMetric(AbstainerFactory):
                                valid_positives_cdf, valid_negatives_cdf))
 
 
-        def abstaining_func(posterior_probs, uncertainties=None):
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
             #test_posterior_and_index have 2-tuples of prob, testing index
             test_posterior_and_index = [(x[1], x[0]) for x in
                                         enumerate(posterior_probs)]
@@ -568,11 +602,84 @@ class RecursiveMarginalDeltaAuPrc(MarginalDeltaAuPrcMixin,
 class Uncertainty(AbstainerFactory):
 
     def __call__(self, valid_labels=None, valid_posterior=None,
-                       valid_uncert=None):
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
 
-        def abstaining_func(posterior_probs, uncertainties):
+        def abstaining_func(posterior_probs,
+                            uncertainties,
+                            embeddings=None):
             #posterior_probs can be None
             return uncertainties
+        return abstaining_func
+
+
+class CoreSetMinDist(AbstainerFactory):
+
+    def __call__(self, train_embeddings, train_labels, valid_labels=None,
+                       valid_posterior=None, valid_uncert=None):
+
+        from sklearn.neighbors import NearestNeighbors
+        nbrs = NearestNeighbors(n_neighbors=2).fit(train_embeddings)
+
+        def abstaining_func(embeddings, posterior_probs=None,
+                            uncertainties=None):
+            #interrogate the KNN object with the provided embeddings
+            #return the distance to the nearest
+            distances, indices = nbrs.kneighbors(embeddings)
+            distances = distances.squeeze()
+            return distances #the larger the distance, the less confident
+        return abstaining_func
+
+
+class NNDist(AbstainerFactory):
+
+    def __init__(self, k):
+        self.k = k
+
+    def __call__(self, train_embeddings, train_labels, valid_labels=None,
+                       valid_posterior=None, valid_uncert=None):
+
+        from sklearn.neighbors import NearestNeighbors
+        nbrs = NearestNeighbors(n_neighbors=2).fit(train_embeddings)
+        max_class = np.max(train_labels)
+
+        def abstaining_func(embeddings, posterior_probs=None,
+                            uncertainties=None):
+            #interrogate the KNN object with the provided embeddings
+            #for the k nearest neighbors
+            #return the metric in the paper
+            distances, indices = nbrs.kneighbors(embeddings)
+            #exponentiate the distances
+            distances = np.exp(np.array(distances)*-1)
+            confidence_scores = []
+            for ex_nn_distances, ex_nn_indices, prob in zip(distances,
+                                                            indices,
+                                                            posterior_probs):
+                
+                nn_labels = np.array([train_embeddings[idx] for
+                                      idx in ex_nn_indices])
+                denominator = sum(ex_nn_distances) 
+                class_confidences = []
+                examples_accounted_for = 0
+                for i in range(max_class+1):
+                    class_distances = ex_nn_distances[nn_labels==i] 
+                    examples_accounted_for += len(class_distances)
+                    class_confidences = sum(class_distances)/denominator
+                #make sure all examples are accounted for
+                assert len(nn_labels)==examples_accounted_for
+                #let the confidence score be weighted by the posterior prob
+                #take a weighted sum of the confidence across the classes
+                # according to the posterior probability (I didn't find
+                # this detail in the paper, so I am not totally sure how they
+                # obtained a single confidence score in the end...)
+                if (hasattr(prob, '__iter__')):
+                    confidence_scores.append(sum(class_confidences*prob))
+                else:
+                    assert len(class_confidences)==2
+                    confidence_scores.append(class_confidences[0]*(1-prob)
+                                             + class_confidences[1]*prob)
+            #the further from 1 you are, the less confident you are  
+            return np.array(1-confidence_scores) 
         return abstaining_func
 
 
@@ -587,7 +694,9 @@ class ConvexHybrid(AbstainerFactory):
         self.stepsize = stepsize
         self.verbose = verbose
 
-    def __call__(self, valid_labels, valid_posterior, valid_uncert):
+    def __call__(self, valid_labels, valid_posterior,
+                       valid_uncert, train_embeddings=None,
+                       train_labels=None):
 
         factory1_func = self.factory1(valid_labels=valid_labels,
                                       valid_posterior=valid_posterior,
@@ -613,7 +722,9 @@ class ConvexHybrid(AbstainerFactory):
         if (self.verbose):
             print("Best a",a) 
 
-        def abstaining_func(posterior_probs, uncertainties):
+        def abstaining_func(posterior_probs,
+                            uncertainties,
+                            embeddings=None):
             scores1 = factory1_func(posterior_probs=posterior_probs,
                                     uncertainties=uncertainties)
             scores2 = factory2_func(posterior_probs=posterior_probs,

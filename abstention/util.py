@@ -19,6 +19,21 @@ def get_preact_func(model, task_idx):
     return batched_func
 
 
+def get_embed_func(model, task_idx):
+    embed_func = K.function([model.layers[0].input, K.learning_phase()],
+                                   [model.layers[-4].output])
+    def batched_func(data, learning_phase, batch_size):
+        to_return = []
+        start_idx = 0
+        while start_idx < len(data):
+            to_return.extend(
+                embed_func([data[start_idx:start_idx+batch_size],
+                            learning_phase])[0][:, task_idx])
+            start_idx += batch_size
+        return np.array(to_return)
+    return batched_func
+
+
 def obtain_raw_data(preact_func, data, num_dropout_runs, batch_size=50):
     print("Computing deterministic activations")
     deterministic_preacts = np.array(
@@ -34,6 +49,13 @@ def obtain_raw_data(preact_func, data, num_dropout_runs, batch_size=50):
             np.array(preact_func(data=data, learning_phase=1,
                                  batch_size=batch_size)).squeeze())
     return deterministic_preacts, np.array(dropout_run_results)
+
+
+def obtain_embeddings(embed_func, data, batch_size=50):
+    print("Computing embeddings")
+    embeddings_results = np.array(embed_func(data=data, learning_phase=0,
+                                             batch_size=batch_size)).squeeze()
+    return embeddings_results
 
 
 def obtain_posterior_probs_and_uncert_estimates(

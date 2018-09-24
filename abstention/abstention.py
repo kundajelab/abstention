@@ -199,7 +199,7 @@ class RandomAbstention(AbstainerFactory):
                        valid_uncert=None, train_embeddings=None,
                        train_labels=None):
 
-        def random_func(posterior_probs, uncertainties=None):
+        def random_func(posterior_probs, uncertainties=None, embeddings=None):
             return np.random.permutation(range(len(posterior_probs)))/(
                      len(posterior_probs))
         return random_func
@@ -619,7 +619,7 @@ class CoreSetMinDist(AbstainerFactory):
                        valid_posterior=None, valid_uncert=None):
 
         from sklearn.neighbors import NearestNeighbors
-        nbrs = NearestNeighbors(n_neighbors=2).fit(train_embeddings)
+        nbrs = NearestNeighbors(n_neighbors=1).fit(train_embeddings)
 
         def abstaining_func(embeddings, posterior_probs=None,
                             uncertainties=None):
@@ -640,9 +640,9 @@ class NNDist(AbstainerFactory):
                        valid_posterior=None, valid_uncert=None):
 
         from sklearn.neighbors import NearestNeighbors
-        nbrs = NearestNeighbors(n_neighbors=2).fit(train_embeddings)
-        max_class = np.max(train_labels)
-
+        nbrs = NearestNeighbors(n_neighbors=self.k).fit(train_embeddings)
+        max_class = int(np.max(train_labels))
+        
         def abstaining_func(embeddings, posterior_probs=None,
                             uncertainties=None):
             #interrogate the KNN object with the provided embeddings
@@ -656,15 +656,16 @@ class NNDist(AbstainerFactory):
                                                             indices,
                                                             posterior_probs):
                 
-                nn_labels = np.array([train_embeddings[idx] for
-                                      idx in ex_nn_indices])
-                denominator = sum(ex_nn_distances) 
+                nn_labels = np.array([train_labels[idx] for
+                                      idx in ex_nn_indices]).squeeze()
+                denominator = sum(ex_nn_distances)
+                
                 class_confidences = []
                 examples_accounted_for = 0
                 for i in range(max_class+1):
                     class_distances = ex_nn_distances[nn_labels==i] 
                     examples_accounted_for += len(class_distances)
-                    class_confidences = sum(class_distances)/denominator
+                    class_confidences.append(sum(class_distances)/denominator)
                 #make sure all examples are accounted for
                 assert len(nn_labels)==examples_accounted_for
                 #let the confidence score be weighted by the posterior prob
@@ -678,8 +679,8 @@ class NNDist(AbstainerFactory):
                     assert len(class_confidences)==2
                     confidence_scores.append(class_confidences[0]*(1-prob)
                                              + class_confidences[1]*prob)
-            #the further from 1 you are, the less confident you are  
-            return np.array(1-confidence_scores) 
+            #the further from 1 you are, the less confident you are
+            return 1-np.array(confidence_scores)
         return abstaining_func
 
 

@@ -21,7 +21,7 @@ def get_preact_func(model, task_idx):
 
 def get_embed_func(model, task_idx):
     embed_func = K.function([model.layers[0].input, K.learning_phase()],
-                                   [model.layers[-4].output])
+                                   [model.layers[-3].output])
     def batched_func(data, learning_phase, batch_size):
         to_return = []
         start_idx = 0

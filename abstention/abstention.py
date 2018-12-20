@@ -222,6 +222,133 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
         return abstaining_func
 
 
+class DistMaxClassProbFromOne(AbstainerFactory):
+
+    def __call__(self, valid_labels=None, valid_posterior=None,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            assert len(posterior_probs.shape)==2
+            return 1-np.max(posterior_probs, axis=1)
+        return abstaining_func
+
+
+class Entropy(AbstainerFactory):
+
+    def __call__(self, valid_labels=None, valid_posterior=None,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            assert len(posterior_probs.shape)==2
+            return -np.sum(posterior_probs*np.log(posterior_probs),axis=1)
+        return abstaining_func
+
+
+def weighted_kappa_metric(predprobs, true_labels, weights):
+    #weights: axis 0 is prediction, axis 1 is true
+    assert predprobs.shape[1]==weights.shape[1]
+    assert predprobs.shape[1]==weights.shape[0]
+    assert true_labels.shape[1]==weights.shape[1]
+    assert true_labels.shape[1]==weights.shape[0]
+    assert all([weights[i,i]==0 for i in range(weights.shape[1])])
+    actual_class_proportions = np.mean(true_labels, axis=0)
+    argmax_predictions = np.argmax(predprobs, axis=1)
+    pred_class_proportions = np.array([
+        np.mean(argmax_predictions==i)
+        for i in range(predprobs.shape[1])])
+    expected_confusion_matrix = (
+        pred_class_proportions[:,None]*
+        actual_class_proportions[None,:])
+    denominator = np.sum(expected_confusion_matrix*weights)
+    numerator = (np.sum([np.sum(weights[np.argmax(x)]*y)
+                             for (x,y) in zip(predprobs,true_labels)])/
+                     float(len(predprobs)))
+    return 1 - numerator/denominator
+         
+
+class WeightedKappa(AbstainerFactory):
+
+    def __init__(self, weights, estimate_class_imbalance_from_valid=False):
+        self.weights = weights
+        self.estimate_class_imbalance_from_valid =\
+            estimate_class_imbalance_from_valid
+
+    def __call__(self, valid_labels=None, valid_posterior=None,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
+
+        #one-hot encoded validation labels expected
+        if (self.estimate_class_imbalance_from_valid):
+            assert valid_labels is not None
+            assert valid_posterior is not None
+            assert np.max(valid_labels)==1.0
+            assert valid_labels.shape[1]==self.weights.shape[1]
+            assert valid_labels.shape[1]==self.weights.shape[0]
+            assert valid_posterior.shape[1]==self.weights.shape[1]
+            assert valid_posterior.shape[1]==self.weights.shape[0]
+            valid_label_fractions =(
+                np.sum(valid_labels,axis=0)/float(valid_labels.shape[0]))
+            print("validation set weighted kappa", 
+                   weighted_kappa_metric(
+                    predprobs=valid_posterior,
+                    true_labels=valid_labels,
+                    weights=self.weights))
+            print("validation set estimated weighted kappa from probs", 
+                   weighted_kappa_metric(
+                    predprobs=valid_posterior,
+                    true_labels=valid_posterior,
+                    weights=self.weights))
+
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            assert posterior_probs.shape[1]==self.weights.shape[1]
+            assert posterior_probs.shape[1]==self.weights.shape[0]
+            est_label_numbers = (valid_label_fractions*len(posterior_probs) 
+              if self.estimate_class_imbalance_from_valid
+              else np.sum(posterior_probs,axis=0))
+            argmax_predictions = np.argmax(posterior_probs, axis=1)
+            pred_class_numbers = np.array([
+                np.sum(argmax_predictions==i)
+                for i in range(posterior_probs.shape[1])])
+            expected_confusion_matrix = (
+                (pred_class_numbers[:,None]/float(len(posterior_probs)))*
+                est_label_numbers[None,:])
+            est_denominator = np.sum(expected_confusion_matrix*self.weights)
+            est_numerator = np.sum([np.sum(self.weights[np.argmax(x)]*y)
+                             for (x,y) in zip(posterior_probs,
+                                              posterior_probs)])
+            est_kappa = (1 - (est_denominator/est_numerator))
+            #compute the difference abtaining with each example 
+            expected_impact_abstentions = []
+            for example in posterior_probs:
+                example_pred_class = np.argmax(example)
+                new_est_kappa = 0
+                for (label_class_idx,label_class_prob) in enumerate(example):
+                    new_pred_class_numbers = np.array(pred_class_numbers) 
+                    new_pred_class_numbers[example_pred_class] -= 1
+                    new_est_label_numbers = np.array(est_label_numbers)
+                    new_est_label_numbers[label_class_idx] -= label_class_prob 
+                    new_expected_confusion_matrix = (
+                        (new_pred_class_numbers[:,None]/
+                         float(len(posterior_probs)-1))*
+                        new_est_label_numbers[None,:])
+                    new_est_denominator = np.sum(
+                        new_expected_confusion_matrix*self.weights)
+                    new_est_numerator = (est_numerator
+                      - self.weights[example_pred_class,label_class_idx]) 
+                    new_est_kappa += label_class_prob*(1 - 
+                     (new_est_numerator/new_est_denominator))
+                expected_impact_abstentions.append(new_est_kappa - est_kappa) 
+            expected_impact_abstentions = np.array(expected_impact_abstentions) 
+            return expected_impact_abstentions
+        return abstaining_func
+
+
 class NegativeAbsLogLikelihoodRatio(AbstainerFactory):
 
     def __call__(self, valid_labels, valid_posterior,

@@ -3,6 +3,8 @@ import numpy as np
 
 #srs: signed rank sum test
 def wilcox_srs(vals1, vals2):   
+    vals1 = np.array(vals1)
+    vals2 = np.array(vals2)
     signed_ranks = ([(1+x[0])*np.sign(x[1]) for x in 
                      enumerate(sorted(vals1-vals2, key=lambda x: abs(x)))])
     sum_positives = sum([x for x in signed_ranks if x > 0]+[1e-7])

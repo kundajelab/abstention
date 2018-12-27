@@ -237,9 +237,81 @@ class ImbalanceAdaptationWrapper(CalibratorFactory):
                 )['x'][0]
 
             new_calib_test = pos_densities_at_test_pts*alpha / (
-                pos_densities_at_test_pts*alpha + neg_densities_at_test_pts*(1-alpha)
-                )
+                pos_densities_at_test_pts*alpha
+                + neg_densities_at_test_pts*(1-alpha))
 
             return new_calib_test
 
         return calibration_func
+
+
+class EMImbalanceAdapter(object):
+
+    def __init__(self, verbose=True,
+                       tolerance=1E-3,
+                       max_iterations=100):
+        self.verbose = verbose
+        self.tolerance = tolerance
+
+    def __call__(self, valid_posterior_probs, valid_labels):
+
+        assert valid_posterior_probs.shape==valid_labels.shape
+        assert len(valid_posterior_probs.shape)<=2
+        assert len(valid_labels.shape)<=2
+
+        #if binary labels were provided, convert to softmax format
+        # for consistency
+        if (len(valid_labels.shape)==1 or valid_labels.shape[1]==1):
+            valid_labels = np.squeeze(valid_labels)
+            valid_posterior_probs = np.squeeze(valid_posterior_probs)
+            softmax_valid_labels = np.zeros((len(valid_labels),2))
+            softmax_valid_labels[:,1] = valid_labels
+            softmax_valid_labels[:,0] = 1-valid_labels
+            softmax_valid_probs = np.zeros((len(valid_labels),2))
+            softmax_valid_probs[:,1] = valid_posterior_probs 
+            softmax_valid_probs[:,0] = 1-valid_posterior_probs 
+        else:
+            softmax_valid_labels = valid_labels
+            softmax_valid_probs = valid_posterior_probs
+
+        valid_class_imbalance = np.mean(valid_labels, axis=0)
+        if (self.verbose):
+            print("Original class imbalance", valid_class_imbalance)
+        
+        def imbalance_adapter(initial_posterior_probs):
+            if (len(initial_posterior_probs.shape)==1
+                or initial_posterior_probs.shape[1]==1):
+                softmax_posterior_probs = np.zeros(
+                    (len(initial_posterior_probs),2)) 
+                softmax_posterior_probs[:,0] = initial_posterior_probs
+                softmax_posterior_probs[:,1] = 1-initial_posterior_probs
+
+            current_iter_class_imbalance = valid_class_imbalance
+            current_iter_posterior_probs = initial_posterior_probs
+            next_iter_class_imbalance = None
+            next_iter_posterior_probs = None
+            iter_number = 0
+            if (next_iter_class_imbalance is None
+                or (np.sum(np.abs(next_iter_class_imbalance
+                                  -current_iter_class_imbalance)
+                           <= self.tolerance))):
+                if (next_iter_class_imbalance is not None):
+                    current_iter_class_imbalance=next_iter_class_imbalance 
+                    current_iter_posterior_probs=next_iter_posterior_probs
+                next_iter_class_imbalance = np.mean(
+                    current_iter_posterior_probs, axis=0) 
+                next_iter_posterior_probs_unnorm =(
+                    (initial_posterior_probs
+                     *next_iter_class_imbalance[None,:])/
+                    valid_class_imbalance[None,:])
+                next_iter_posterior_probs = (
+                    next_iter_posterior_probs_unnorm/
+                    np.sum(next_iter_posterior_probs_unnorm,axis=-1)[:,None])
+                iter_number += 1
+            if (self.verbose):
+                print("Finished on iteration",iter_number,"with delta",
+                      np.sum(np.abs(current_iter_class_imbalance-
+                                    valid_class_imbalance)))
+                print("Final imbalance", current_iter_class_imbalance)
+            return current_iter_posterior_probs 
+        return imbalance_adapter

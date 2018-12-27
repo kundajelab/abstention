@@ -21,12 +21,14 @@ def get_ustats_mat(method_to_perfs, method_names, max_ustat=55):
     to_return = np.zeros((len(method_names), len(method_names)))
     for i in range(len(method_names)):
         for j in range(len(method_names)):
-            if (i!=j):
-                to_return[i,j] = wilcox_srs(
-                            vals1 = method_to_perfs[method_names[i]],
-                            vals2 = method_to_perfs[method_names[j]])
-            else:
+            vals1 = method_to_perfs[method_names[i]]  
+            vals2 = method_to_perfs[method_names[j]]
+            if (np.sum(np.abs(np.array(vals1)-np.array(vals2)))==0):
                 to_return[i,j] = max_ustat
+            else:
+                to_return[i,j] = wilcox_srs(
+                            vals1 = vals1,
+                            vals2 = vals2)
 
     return to_return
 

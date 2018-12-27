@@ -272,10 +272,12 @@ def weighted_kappa_metric(predprobs, true_labels, weights):
 
 class WeightedKappa(AbstainerFactory):
 
-    def __init__(self, weights, estimate_class_imbalance_from_valid=False):
+    def __init__(self, weights, estimate_class_imbalance_from_valid=False,
+                       verbose=True):
         self.weights = weights
         self.estimate_class_imbalance_from_valid =\
             estimate_class_imbalance_from_valid
+        self.verbose = verbose
 
     def __call__(self, valid_labels=None, valid_posterior=None,
                        valid_uncert=None, train_embeddings=None,
@@ -292,15 +294,16 @@ class WeightedKappa(AbstainerFactory):
             assert valid_posterior.shape[1]==self.weights.shape[0]
             valid_label_fractions =(
                 np.sum(valid_labels,axis=0)/float(valid_labels.shape[0]))
-            print("validation set weighted kappa", 
-                   weighted_kappa_metric(
-                    predprobs=valid_posterior,
-                    true_labels=valid_labels,
-                    weights=self.weights))
-            print("validation set estimated weighted kappa from probs", 
-                   weighted_kappa_metric(
-                    predprobs=valid_posterior,
-                    true_labels=valid_posterior,
+            if (self.verbose):
+                print("validation set weighted kappa", 
+                       weighted_kappa_metric(
+                        predprobs=valid_posterior,
+                        true_labels=valid_labels,
+                        weights=self.weights))
+                print("validation set estimated weighted kappa from probs", 
+                       weighted_kappa_metric(
+                        predprobs=valid_posterior,
+                        true_labels=valid_posterior,
                     weights=self.weights))
 
         def abstaining_func(posterior_probs,

@@ -130,7 +130,7 @@ class TempScaling(CalibratorFactory):
             print("Final NLL & grad is: ",final_nll)
             print("Final ECE is: ",final_ece)
 
-        return (lambda x: softmax(preact=x, temp=optimal_t))
+        return (lambda preact: softmax(preact=preact, temp=optimal_t))
 
 
 class Expit(CalibratorFactory):
@@ -186,66 +186,155 @@ class IsotonicRegression(CalibratorFactory):
         return calibration_func
 
 
+class BiasCorrectionWrapper(CalibratorFactory):
+
+    def __init__(self, base_calibrator_factory,
+                       bias_corrector_factory):
+        self.base_calibrator_factory = base_calibrator_factory
+        self.bias_corrector_factory = bias_corrector_factory
+
+    def __call__(self, valid_preacts, valid_labels):
+        base_calibration_func = self.base_calibrator_factory(
+            valid_preacts=valid_preacts, valid_labels=valid_labels)
+        biased_valid_calib_probs = base_calibration_func(valid_preacts) 
+        bias_corrector = self.bias_corrector_factory(
+            valid_posterior_probs=biased_valid_calib_probs,
+            valid_labels=valid_labels)
+        def calibration_func(preact):
+            return bias_corrector(
+                    unadapted_posterior_probs=
+                     base_calibration_func(preact=preact))
+        return calibration_func
+        
+
+class EMBiasCorrectorFactory(object):
+
+    def __init__(self, tolerance=1E-3, max_iter=100, verbose=False):
+        self.tolerance = tolerance
+        self.verbose = verbose
+        self.max_iter = max_iter
+
+    def __call__(self, valid_posterior_probs, valid_labels):
+        
+        #idea: figure out what prior distribution valid_posterior_probs
+        # originated from to explain the difference between
+        # np.mean(valid_labels, axis=0)
+        # and np.mean(valid_posterior_probs, axis=0)
+
+        observed_class_freq = np.mean(valid_labels,axis=0)
+        current_orig_freq = np.array(observed_class_freq)
+        if (self.verbose):
+            print("Observed class freq:",observed_class_freq)
+        terminate = False
+
+        iterations = 0
+        while (terminate==False):
+            current_ex_weights =\
+                np.sum((current_orig_freq/observed_class_freq)[None,:]
+                       *valid_labels,axis=1)
+            next_orig_freq =\
+                np.mean(current_ex_weights[:,None]*valid_posterior_probs,
+                        axis=0)
+            iterations += 1
+            if ((np.sum(np.abs(next_orig_freq-current_orig_freq)) <
+                 self.tolerance) or iterations > self.max_iter):
+                terminate = True
+            current_orig_freq = next_orig_freq
+        if (self.verbose):
+            print("Iterations:",iterations)
+            print("Est. original class freq:",current_orig_freq)
+        return PriorShiftAdapterFunc(
+                original_class_freq=current_orig_freq,
+                adapted_class_freq=observed_class_freq)
+
+
 class ImbalanceAdaptationWrapper(CalibratorFactory):
 
-    def __init__(self, base_calibrator_factory, verbose=True):
+    def __init__(self, base_calibrator_factory,
+                       imbalance_adapter,
+                       verbose=True):
         self.base_calibrator_factory = base_calibrator_factory
+        self.imbalance_adapter = imbalance_adapter
         self.verbose = verbose
 
     def __call__(self, valid_preacts, valid_labels):
         base_calibration_func = self.base_calibrator_factory(
             valid_preacts=valid_preacts, valid_labels=valid_labels)
-        calib_valid_probs = base_calibration_func(valid_preacts) 
-        # bandwidth is scotts factor
-        valid_kde = KernelDensity(
-            kernel='gaussian', bandwidth=len(valid_labels)**(-1./(1+4))).fit(
-            list(zip(calib_valid_probs, np.zeros((len(calib_valid_probs))))))
+        valid_calib_probs = base_calibration_func(valid_preacts) 
 
         def calibration_func(preact):
             calib_probs = base_calibration_func(preact)
-            valid_densities_at_test_pts = np.exp(valid_kde.score_samples(
-                zip(calib_probs, np.zeros((len(calib_probs))))))
-            # bandwidth is scotts factor
-            kde_test = KernelDensity(kernel='gaussian',
-                bandwidth=len(calib_probs)**(-1./(1+4))).fit(
-                list(zip(calib_probs, np.zeros((len(calib_probs))))))
-            test_densities_at_test_pts = np.exp(kde_test.score_samples(
-                zip(calib_probs, np.zeros((len(calib_probs))))))
-            neg_densities_at_test_pts =\
-                valid_densities_at_test_pts*(1-calib_probs)*\
-                len(valid_labels)/(len(valid_labels) - np.sum(valid_labels))
-            pos_densities_at_test_pts =\
-                valid_densities_at_test_pts*calib_probs*(len(valid_labels)\
-                /np.sum(valid_labels))
-
-            def eval_func(x):
-                x = x[0]
-                differences =\
-                    test_densities_at_test_pts-(x*pos_densities_at_test_pts\
-                    +(1-x)*neg_densities_at_test_pts)
-                loss = np.sum(np.square(differences))
-                grad = np.sum(2*(differences)*(neg_densities_at_test_pts\
-                    -pos_densities_at_test_pts))
-                return loss, np.array([grad])
-
-            alpha = scipy.optimize.minimize(fun=eval_func,
-                x0=np.array([0.5]),
-                bounds=[(0,1)],
-                jac=True,
-                method='L-BFGS-B',
-                tol=1e-07,
-                )['x'][0]
-
-            new_calib_test = pos_densities_at_test_pts*alpha / (
-                pos_densities_at_test_pts*alpha
-                + neg_densities_at_test_pts*(1-alpha))
-
-            return new_calib_test
+            imbalance_adapter_func = self.imbalance_adapter(
+                valid_labels=valid_labels,
+                tofit_initial_posterior_probs=calib_probs,
+                valid_posterior_probs=valid_calib_probs)
+            return imbalance_adapter_func(
+                    unadapted_posterior_probs=calib_probs)
 
         return calibration_func
 
 
-class EMImbalanceAdapter(object):
+class AbstractImbalanceAdapterFunc(object):
+
+    def __call__(self, unadapted_posterior_probs):
+        raise NotImplementedError()
+
+
+class PriorShiftAdapterFunc(AbstractImbalanceAdapterFunc):
+
+    def __init__(self, original_class_freq, adapted_class_freq):
+        original_class_freq = np.array(original_class_freq)
+        adapted_class_freq = np.array(adapted_class_freq) 
+        assert len(original_class_freq.shape)==1
+        self.original_class_freq = original_class_freq
+        self.adapted_class_freq = adapted_class_freq
+        assert np.isclose(np.sum(self.original_class_freq), 1.0)
+        assert np.isclose(np.sum(self.adapted_class_freq), 1.0)
+
+    def __call__(self, unadapted_posterior_probs):
+        #if supplied probs are in binary format, convert to softmax format
+        if (len(unadapted_posterior_probs.shape)==1
+            or unadapted_posterior_probs.shape[1]==1):
+            softmax_unadapted_posterior_probs = np.zeros(
+                (len(unadapted_posterior_probs),2)) 
+            softmax_unadapted_posterior_probs[:,0] =\
+                unadapted_posterior_probs
+            softmax_unadapted_posterior_probs[:,1] =\
+                1-unadapted_posterior_probs
+        else:
+            softmax_unadapted_posterior_probs =\
+                unadapted_posterior_probs
+
+        adapted_posterior_probs_unnorm =(
+            softmax_unadapted_posterior_probs*
+             (self.adapted_class_freq[None,:]/
+              self.original_class_freq[None,:]))
+        adapted_posterior_probs = (
+            adapted_posterior_probs_unnorm/
+            np.sum(adapted_posterior_probs_unnorm,axis=-1)[:,None])
+
+        #return to binary format if appropriate
+        if (len(unadapted_posterior_probs.shape)==1
+            or unadapted_posterior_probs.shape[1]==1):
+            if (len(unadapted_posterior_probs.shape)==1):
+                adapted_posterior_probs =\
+                    adapted_posterior_probs[:,1] 
+            else:
+                if (unadapted_posterior_probs.shape[1]==1):
+                    adapted_posterior_probs =\
+                        adapted_posterior_probs[:,1:2] 
+
+        return adapted_posterior_probs
+
+
+class AbstractImbalanceAdapter(object):
+
+    def __call__(self, valid_labels, tofit_initial_posterior_probs,
+                       valid_posterior_probs):
+        raise NotImplementedError()
+
+
+class EMImbalanceAdapter(AbstractImbalanceAdapter):
 
     def __init__(self, verbose=True,
                        tolerance=1E-3,
@@ -254,7 +343,8 @@ class EMImbalanceAdapter(object):
         self.tolerance = tolerance
 
     def __call__(self, valid_labels,
-                       tofit_initial_posterior_probs):
+                       tofit_initial_posterior_probs,
+                       valid_posterior_probs=None):
 
         assert len(valid_labels.shape)<=2
         #if binary labels were provided, convert to softmax format
@@ -267,9 +357,9 @@ class EMImbalanceAdapter(object):
             softmax_valid_labels[:,0] = 1-valid_labels
         else:
             softmax_valid_labels = valid_labels
-        valid_class_imbalance = np.mean(softmax_valid_labels, axis=0)
+        valid_class_freq = np.mean(softmax_valid_labels, axis=0)
         if (self.verbose):
-            print("Original class imbalance", valid_class_imbalance)
+            print("Original class freq", valid_class_freq)
         
         if (len(tofit_initial_posterior_probs.shape)==1
             or tofit_initial_posterior_probs.shape[1]==1):
@@ -282,69 +372,37 @@ class EMImbalanceAdapter(object):
         else:
             softmax_initial_posterior_probs = tofit_initial_posterior_probs
 
-        current_iter_class_imbalance = valid_class_imbalance
+        current_iter_class_freq = valid_class_freq
         current_iter_posterior_probs = softmax_initial_posterior_probs
         next_iter_class_imbalance = None
         next_iter_posterior_probs = None
         iter_number = 0
         while (next_iter_class_imbalance is None
             or (np.sum(np.abs(next_iter_class_imbalance
-                              -current_iter_class_imbalance)
+                              -current_iter_class_freq)
                        > self.tolerance))):
             if (next_iter_class_imbalance is not None):
-                current_iter_class_imbalance=next_iter_class_imbalance 
+                current_iter_class_freq=next_iter_class_imbalance 
                 current_iter_posterior_probs=next_iter_posterior_probs
             next_iter_class_imbalance = np.mean(
                 current_iter_posterior_probs, axis=0) 
             next_iter_posterior_probs_unnorm =(
                 (softmax_initial_posterior_probs
                  *next_iter_class_imbalance[None,:])/
-                valid_class_imbalance[None,:])
+                valid_class_freq[None,:])
             next_iter_posterior_probs = (
                 next_iter_posterior_probs_unnorm/
                 np.sum(next_iter_posterior_probs_unnorm,axis=-1)[:,None])
             iter_number += 1
         if (self.verbose):
             print("Finished on iteration",iter_number,"with delta",
-                  np.sum(np.abs(current_iter_class_imbalance-
+                  np.sum(np.abs(current_iter_class_freq-
                                 next_iter_class_imbalance)))
-        current_iter_class_imbalance = next_iter_class_imbalance
+        current_iter_class_freq = next_iter_class_imbalance
         if (self.verbose):
-            print("Final imbalance", current_iter_class_imbalance)
-            print("Multiplier:",current_iter_class_imbalance/valid_class_imbalance)
+            print("Final freq", current_iter_class_freq)
+            print("Multiplier:",current_iter_class_freq/valid_class_freq)
 
-        def imbalance_adapter(untransformed_posterior_probs):
-
-            if (len(untransformed_posterior_probs.shape)==1
-                or untransformed_posterior_probs.shape[1]==1):
-                softmax_untransformed_posterior_probs = np.zeros(
-                    (len(untransformed_posterior_probs),2)) 
-                softmax_untransformed_posterior_probs[:,0] =\
-                    untransformed_posterior_probs
-                softmax_untransformed_posterior_probs[:,1] =\
-                    1-untransformed_posterior_probs
-            else:
-                softmax_untransformed_posterior_probs =\
-                    untransformed_posterior_probs
-
-            transformed_posterior_probs_unnorm =(
-                untransformed_posterior_probs*
-                 (current_iter_class_imbalance[None,:]/
-                  valid_class_imbalance[None,:]))
-            transformed_posterior_probs = (
-                transformed_posterior_probs_unnorm/
-                np.sum(transformed_posterior_probs_unnorm,axis=-1)[:,None])
-
-            #return to binary format if appropriate
-            if (len(untransformed_posterior_probs.shape)==1
-                or untransformed_posterior_probs.shape[1]==1):
-                if (len(untransformed_posterior_probs.shape)==1):
-                    transformed_posterior_probs =\
-                        transformed_posterior_probs[:,1] 
-                else:
-                    if (untransformed_posterior_probs.shape[1]==1):
-                        transformed_posterior_probs =\
-                            transformed_posterior_probs[:,1:2] 
-
-            return transformed_posterior_probs
-        return imbalance_adapter
+        return PriorShiftAdapterFunc(
+                original_class_freq=valid_class_freq,
+                adapted_class_freq=current_iter_class_freq)

@@ -252,25 +252,48 @@ def get_weighted_kappa_predictions(predprobs, weights, mode):
 
     assert mode in ['argmax', 'optim', 'optim-num', 'optim-num-by-denom']
 
+    expected_true_label_props = np.mean(predprobs, axis=0) 
+    denominator_addition = np.sum(
+        expected_true_label_props[None,:]*weights,axis=-1)
+    numerator_addition = np.sum(predprobs[:,None,:]*weights[None,:,:],
+                                axis=-1)
     if (mode=='argmax'):
         return np.argmax(predprobs, axis=-1) 
     elif (mode=='optim-num'):
-        return np.argmin(np.sum(predprobs[:,None,:]*weights[None,:,:],
-                                axis=-1),axis=-1)
-    elif (mode=='optim-num-by-denom' or mode=='optim'):
-        expected_true_label_props = np.mean(predprobs, axis=0) 
-        denominator_addition = np.sum(
-            expected_true_label_props[None,:]*weights,axis=-1)
-        numerator_addition = np.sum(predprobs[:,None,:]*weights[None,:,:],
-                                    axis=-1)
+        return np.argmin(numerator_addition,axis=-1)
+    elif (mode=='optim-num-by-denom'):
         return np.argmin(numerator_addition/denominator_addition[None,:],
                          axis=-1)
+    elif (mode=='optim'):
+        #get an estimated value for the numerator and denominator according
+        # to the optim-num-by-denom criterior
+        standin_preds =  np.argmin(numerator_addition/
+                                   denominator_addition[None,:],axis=-1)
+        iterations = 5
+        best_est_wkappa = None
+        best_iter = None
+        best_standin_preds = standin_preds
+        for iter_num in range(iterations):
+            estim_num = np.sum(numerator_addition[
+                                list(range(len(standin_preds))),standin_preds])
+            estim_denom = np.sum([denominator_addition[x]
+                                  for x in standin_preds])
+            standin_preds = np.argmin((numerator_addition+estim_num)/
+                            (denominator_addition+estim_denom),axis=-1) 
+            est_wkappa = (1-(estim_num/estim_denom))
+            if (best_est_wkappa is None or best_est_wkappa < est_wkappa):
+                best_standin_preds = standin_preds
+                best_est_wkappa = est_wkappa
+                best_iter = iter_num
+            else:
+                break
+        return best_standin_preds 
     else:
         raise RuntimeError()
 
 
 def weighted_kappa_metric(predprobs, true_labels, weights,
-                          mode='argmax'):
+                          mode):
     #weights: axis 0 is prediction, axis 1 is true
     assert predprobs.shape[1]==weights.shape[1]
     assert predprobs.shape[1]==weights.shape[0]
@@ -295,9 +318,10 @@ def weighted_kappa_metric(predprobs, true_labels, weights,
 
 class WeightedKappa(AbstainerFactory):
 
-    def __init__(self, weights, estimate_class_imbalance_from_valid=False,
+    def __init__(self, weights, mode, estimate_class_imbalance_from_valid=False,
                        verbose=True):
         self.weights = weights
+        self.mode=mode
         self.estimate_class_imbalance_from_valid =\
             estimate_class_imbalance_from_valid
         self.verbose = verbose
@@ -322,12 +346,12 @@ class WeightedKappa(AbstainerFactory):
                        weighted_kappa_metric(
                         predprobs=valid_posterior,
                         true_labels=valid_labels,
-                        weights=self.weights))
+                        weights=self.weights, mode=self.mode))
                 print("validation set estimated weighted kappa from probs", 
                        weighted_kappa_metric(
                         predprobs=valid_posterior,
                         true_labels=valid_posterior,
-                    weights=self.weights))
+                    weights=self.weights, mode=self.mode))
 
         def abstaining_func(posterior_probs,
                             uncertainties=None,
@@ -337,22 +361,23 @@ class WeightedKappa(AbstainerFactory):
             est_label_numbers = (valid_label_fractions*len(posterior_probs) 
               if self.estimate_class_imbalance_from_valid
               else np.sum(posterior_probs,axis=0))
-            argmax_predictions = np.argmax(posterior_probs, axis=1)
+            predictions = get_weighted_kappa_predictions(
+                predprobs=posterior_probs, weights=self.weights,
+                mode=self.mode) 
             pred_class_numbers = np.array([
-                np.sum(argmax_predictions==i)
+                np.sum(predictions==i)
                 for i in range(posterior_probs.shape[1])])
             expected_confusion_matrix = (
                 (pred_class_numbers[:,None]/float(len(posterior_probs)))*
                 est_label_numbers[None,:])
             est_denominator = np.sum(expected_confusion_matrix*self.weights)
-            est_numerator = np.sum([np.sum(self.weights[np.argmax(x)]*y)
-                             for (x,y) in zip(posterior_probs,
+            est_numerator = np.sum([np.sum(self.weights[x]*y)
+                             for (x,y) in zip(predictions,
                                               posterior_probs)])
             est_kappa = (1 - (est_denominator/est_numerator))
             #compute the difference abtaining with each example 
             expected_impact_abstentions = []
-            for example in posterior_probs:
-                example_pred_class = np.argmax(example)
+            for example_pred_class,example in zip(predictions,posterior_probs):
                 new_est_kappa = 0
                 for (label_class_idx,label_class_prob) in enumerate(example):
                     new_pred_class_numbers = np.array(pred_class_numbers) 

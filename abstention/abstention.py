@@ -248,7 +248,29 @@ class Entropy(AbstainerFactory):
         return abstaining_func
 
 
-def weighted_kappa_metric(predprobs, true_labels, weights):
+def get_weighted_kappa_predictions(predprobs, weights, mode):
+
+    assert mode in ['argmax', 'optim', 'optim-num', 'optim-num-by-denom']
+
+    if (mode=='argmax'):
+        return np.argmax(predprobs, axis=-1) 
+    elif (mode=='optim-num'):
+        return np.argmin(np.sum(predprobs[:,None,:]*weights[None,:,:],
+                                axis=-1),axis=-1)
+    elif (mode=='optim-num-by-denom' or mode=='optim'):
+        expected_true_label_props = np.mean(predprobs, axis=0) 
+        denominator_addition = np.sum(
+            expected_true_label_props[None,:]*weights,axis=-1)
+        numerator_addition = np.sum(predprobs[:,None,:]*weights[None,:,:],
+                                    axis=-1)
+        return np.argmin(numerator_addition/denominator_addition[None,:],
+                         axis=-1)
+    else:
+        raise RuntimeError()
+
+
+def weighted_kappa_metric(predprobs, true_labels, weights,
+                          mode='argmax'):
     #weights: axis 0 is prediction, axis 1 is true
     assert predprobs.shape[1]==weights.shape[1]
     assert predprobs.shape[1]==weights.shape[0]
@@ -256,17 +278,18 @@ def weighted_kappa_metric(predprobs, true_labels, weights):
     assert true_labels.shape[1]==weights.shape[0]
     assert all([weights[i,i]==0 for i in range(weights.shape[1])])
     actual_class_proportions = np.mean(true_labels, axis=0)
-    argmax_predictions = np.argmax(predprobs, axis=1)
+    predictions = get_weighted_kappa_predictions(predprobs=predprobs,
+                                                 weights=weights, mode=mode) 
     pred_class_proportions = np.array([
-        np.mean(argmax_predictions==i)
+        np.mean(predictions==i)
         for i in range(predprobs.shape[1])])
     expected_confusion_matrix = (
         pred_class_proportions[:,None]*
         actual_class_proportions[None,:])
     denominator = np.sum(expected_confusion_matrix*weights)
-    numerator = (np.sum([np.sum(weights[np.argmax(x)]*y)
-                             for (x,y) in zip(predprobs,true_labels)])/
-                     float(len(predprobs)))
+    numerator = (np.sum([np.sum(weights[x]*y)
+                         for (x,y) in zip(predictions,true_labels)])/
+                     float(len(predictions)))
     return 1 - numerator/denominator
          
 

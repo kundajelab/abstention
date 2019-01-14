@@ -1,6 +1,6 @@
 from __future__ import division, print_function
 import numpy as np
-from .calibration import inverse_softmax
+from .calibration import inverse_softmax, get_hard_preds 
 from scipy import linalg
 
 
@@ -75,24 +75,26 @@ def map_to_softmax_format_if_approrpiate(values):
 class EMImbalanceAdapter(AbstractImbalanceAdapter):
 
     def __init__(self, verbose=False,
-                       tolerance=1E-3,
+                       tolerance=1E-5,
                        max_iterations=100,
                        calibrator_factory=None):
         self.verbose = verbose
         self.tolerance = tolerance
         self.calibrator_factory = calibrator_factory
+        self.max_iterations = max_iterations
 
     def __call__(self, valid_labels,
                        tofit_initial_posterior_probs,
-                       valid_posterior_probs=None):
+                       valid_posterior_probs):
 
-        assert len(valid_labels.shape)<=2
-        softmax_valid_labels = map_to_softmax_format_if_approrpiate(
-                                  values=valid_labels)
-        if (valid_posterior_probs is not None):
-            softmax_valid_posterior_probs =\
+        softmax_valid_posterior_probs =\
+            map_to_softmax_format_if_approrpiate(
+                values=valid_posterior_probs)
+        if (valid_labels is not None):
+            softmax_valid_labels =\
                 map_to_softmax_format_if_approrpiate(
-                    values=valid_posterior_probs)
+                    values=valid_labels)
+
         #if binary labels were provided, convert to softmax format
         # for consistency
         if (self.calibrator_factory is not None):
@@ -104,10 +106,11 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
         else:
             calibrator_func = lambda x: x
 
-        if (valid_posterior_probs is not None):
-            valid_posterior_probs = calibrator_func(valid_posterior_probs)
-
-        valid_class_freq = np.mean(softmax_valid_labels, axis=0)
+        valid_posterior_probs = calibrator_func(valid_posterior_probs)
+        #compute the class frequencies based on the posterior probs to ensure
+        # that if the valid posterior probs are supplied for "to fit", then
+        # no shift is estimated
+        valid_class_freq = np.mean(valid_posterior_probs, axis=0)
 
         if (self.verbose):
             print("Original class freq", valid_class_freq)
@@ -121,10 +124,11 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
         next_iter_class_imbalance = None
         next_iter_posterior_probs = None
         iter_number = 0
-        while (next_iter_class_imbalance is None
+        while ((next_iter_class_imbalance is None
             or (np.sum(np.abs(next_iter_class_imbalance
                               -current_iter_class_freq)
-                       > self.tolerance))):
+                       > self.tolerance)))
+            and iter_number < self.max_iterations):
             if (next_iter_class_imbalance is not None):
                 current_iter_class_freq=next_iter_class_imbalance 
                 current_iter_posterior_probs=next_iter_posterior_probs
@@ -201,33 +205,25 @@ class BBSE(AbstractShiftWeightEstimator):
 
         #hard_tofit_preds binarizes tofit_initial_posterior_probs
         # according to the argmax predictions
-        hard_tofit_preds = []
-        for pred in tofit_initial_posterior_probs:
-            to_append = np.zeros(len(pred))
-            to_append[np.argmax(pred)] = 1
-            hard_tofit_preds.append(to_append)
-        hard_tofit_preds = np.array(hard_tofit_preds)
-        hard_valid_preds = []
-        for pred in valid_posterior_probs:
-            to_append = np.zeros(len(pred))
-            to_append[np.argmax(pred)] = 1
-            hard_valid_preds.append(to_append)
-        hard_valid_preds = np.array(hard_valid_preds)
+        hard_tofit_preds = get_hard_preds(
+            softmax_preds=tofit_initial_posterior_probs)
+        hard_valid_preds = get_hard_preds(
+            softmax_preds=valid_posterior_probs)
 
         if (self.soft):
             muhat_yhat = np.mean(tofit_initial_posterior_probs, axis=0) 
         else:
             muhat_yhat = np.mean(hard_tofit_preds, axis=0) 
 
-        #prepare the confusion matrix
+        #prepare the covariance matrix
         if (self.soft):
-            confusion_matrix = np.mean((
+            covariance_matrix = np.mean((
                 valid_posterior_probs[:,:,None]*
                 valid_labels[:,None,:]), axis=0)
         else:
-            confusion_matrix = np.mean((hard_valid_preds[:,:,None]*
+            covariance_matrix = np.mean((hard_valid_preds[:,:,None]*
                                         valid_labels[:,None,:]),axis=0) 
-        inv_confusion = linalg.inv(confusion_matrix)
-        weights = inv_confusion.dot(muhat_yhat)
+        inv_covariance = linalg.inv(covariance_matrix)
+        weights = inv_covariance.dot(muhat_yhat)
         return weights
 

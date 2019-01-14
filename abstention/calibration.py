@@ -72,6 +72,25 @@ class Softmax(CalibratorFactory):
         return (lambda x: softmax(preact=x, temp=1.0))
 
 
+def get_hard_preds(softmax_preds):
+    hard_preds = np.zeros(softmax_preds.shape)
+    hard_preds[list(range(softmax_preds.shape[0])),
+               np.argmax(softmax_preds, axis=-1)] = 1.0 
+    return hard_preds
+
+
+class ConfusionMatrix(CalibratorFactory):
+
+    def __call__(self, valid_preacts, valid_labels, posterior_supplied=None):
+
+        valid_hard_preds = get_hard_preds(softmax_preds=valid_preacts) 
+        denom = (1E-7*((np.sum(valid_hard_preds,axis=0) > 0)==False)
+                 + np.sum(valid_hard_preds,axis=0))
+        confusion_matrix = (np.sum(valid_hard_preds[:,:,None]
+                                   *valid_labels[:,None,:], axis=0)/denom)
+        return (lambda preact: confusion_matrix[np.argmax(preact,axis=-1)]) 
+
+
 class TempScaling(CalibratorFactory):
 
     def __init__(self, ece_bins=15, lbfgs_kwargs={}, verbose=False,

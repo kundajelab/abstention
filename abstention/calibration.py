@@ -10,6 +10,17 @@ from sklearn.isotonic import IsotonicRegression as IR
 from sklearn.linear_model import LogisticRegression as LR
 
 
+def map_to_softmax_format_if_approrpiate(values):
+    if (len(values.shape)==1 or values.shape[1]==1):
+        values = np.squeeze(values)
+        softmax_values = np.zeros((len(values),2))
+        softmax_values[:,1] = values
+        softmax_values[:,0] = 1-values
+    else:
+        softmax_values = values
+    return softmax_values
+
+
 def inverse_softmax(preds):
     return np.log(preds) - np.mean(np.log(preds),axis=1)[:,None]
 
@@ -87,7 +98,7 @@ class ConfusionMatrix(CalibratorFactory):
         denom = (1E-7*((np.sum(valid_hard_preds,axis=0) > 0)==False)
                  + np.sum(valid_hard_preds,axis=0))
         confusion_matrix = (np.sum(valid_hard_preds[:,:,None]
-                                   *valid_labels[:,None,:], axis=0)/denom)
+                                   *valid_labels[:,None,:], axis=0)/denom[:,None])
         return (lambda preact: confusion_matrix[np.argmax(preact,axis=-1)]) 
 
 

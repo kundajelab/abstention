@@ -1,6 +1,7 @@
 from __future__ import division, print_function
 import numpy as np
-from .calibration import inverse_softmax, get_hard_preds 
+from .calibration import (inverse_softmax, get_hard_preds,
+                          map_to_softmax_format_if_approrpiate)
 from scipy import linalg
 
 
@@ -32,7 +33,7 @@ class PriorShiftAdapterFunc(AbstractImbalanceAdapterFunc):
                 unadapted_posterior_probs
 
         softmax_unadapted_posterior_probs =\
-            calibrator_func(softmax_unadapted_posterior_probs)
+            self.calibrator_func(softmax_unadapted_posterior_probs)
 
         adapted_posterior_probs_unnorm =(
             softmax_unadapted_posterior_probs*self.multipliers[None,:])
@@ -61,27 +62,34 @@ class AbstractImbalanceAdapter(object):
         raise NotImplementedError()
 
 
-def map_to_softmax_format_if_approrpiate(values):
-    if (len(values.shape)==1 or values.shape[1]==1):
-        values = np.squeeze(values)
-        softmax_values = np.zeros((len(values),2))
-        softmax_values[:,1] = values
-        softmax_values[:,0] = 1-values
-    else:
-        softmax_values = values
-    return softmax_values
+class AbstractShiftWeightEstimator(object):
+    
+    # Should return the ratios of the weights for each class 
+    def __call__(self, valid_labels,
+                       tofit_initial_posterior_probs,
+                       valid_posterior_probs):
+        raise NotImplementedError()
+
+
+class NoWeightShift(AbstractShiftWeightEstimator):
+
+    def __call__(self, valid_labels, tofit_initial_posterior_probs,
+                       valid_posterior_probs):
+        return np.ones(valid_labels.shape[1])
 
 
 class EMImbalanceAdapter(AbstractImbalanceAdapter):
 
     def __init__(self, verbose=False,
-                       tolerance=1E-5,
+                       tolerance=1E-6,
                        max_iterations=100,
-                       calibrator_factory=None):
+                       calibrator_factory=None,
+                       initialization_weight_ratio=NoWeightShift()):
         self.verbose = verbose
         self.tolerance = tolerance
         self.calibrator_factory = calibrator_factory
         self.max_iterations = max_iterations
+        self.initialization_weight_ratio = initialization_weight_ratio
 
     def __call__(self, valid_labels,
                        tofit_initial_posterior_probs,
@@ -119,34 +127,50 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
             calibrator_func(map_to_softmax_format_if_approrpiate(
                 values=tofit_initial_posterior_probs))
 
-        current_iter_class_freq = valid_class_freq
+        #initialization_weight_ratio is a method that can be used to
+        # estimate the ratios between the label frequencies in the
+        # validation set and the to_fit set; it can be used to obtain a
+        # better initialization for the class frequencies
+        #We normalize the frequencies to sum to 1 because methods like BBSE
+        # are not guaranteed to return weights that give probs that are valid
+        first_iter_class_freq = (
+         valid_class_freq*self.initialization_weight_ratio(
+            valid_labels = softmax_valid_labels,
+            tofit_initial_posterior_probs = softmax_initial_posterior_probs,
+            valid_posterior_probs = softmax_valid_posterior_probs))
+        first_iter_class_freq = (first_iter_class_freq/
+                                 np.sum(first_iter_class_freq))
+
+        current_iter_class_freq = first_iter_class_freq
         current_iter_posterior_probs = softmax_initial_posterior_probs
-        next_iter_class_imbalance = None
+        next_iter_class_freq = None
         next_iter_posterior_probs = None
         iter_number = 0
-        while ((next_iter_class_imbalance is None
-            or (np.sum(np.abs(next_iter_class_imbalance
+        while ((next_iter_class_freq is None
+            or (np.sum(np.abs(next_iter_class_freq
                               -current_iter_class_freq)
                        > self.tolerance)))
             and iter_number < self.max_iterations):
-            if (next_iter_class_imbalance is not None):
-                current_iter_class_freq=next_iter_class_imbalance 
+
+            if (next_iter_class_freq is not None):
+                current_iter_class_freq=next_iter_class_freq 
                 current_iter_posterior_probs=next_iter_posterior_probs
-            next_iter_class_imbalance = np.mean(
-                current_iter_posterior_probs, axis=0) 
-            next_iter_posterior_probs_unnorm =(
+            current_iter_posterior_probs_unnorm =(
                 (softmax_initial_posterior_probs
-                 *next_iter_class_imbalance[None,:])/
+                 *current_iter_class_freq[None,:])/
                 valid_class_freq[None,:])
-            next_iter_posterior_probs = (
-                next_iter_posterior_probs_unnorm/
-                np.sum(next_iter_posterior_probs_unnorm,axis=-1)[:,None])
+            current_iter_posterior_probs = (
+                current_iter_posterior_probs_unnorm/
+                np.sum(current_iter_posterior_probs_unnorm,axis=-1)[:,None])
+
+            next_iter_class_freq = np.mean(
+                current_iter_posterior_probs, axis=0) 
             iter_number += 1
         if (self.verbose):
             print("Finished on iteration",iter_number,"with delta",
                   np.sum(np.abs(current_iter_class_freq-
-                                next_iter_class_imbalance)))
-        current_iter_class_freq = next_iter_class_imbalance
+                                next_iter_class_freq)))
+        current_iter_class_freq = next_iter_class_freq
         if (self.verbose):
             print("Final freq", current_iter_class_freq)
             print("Multiplier:",current_iter_class_freq/valid_class_freq)
@@ -154,38 +178,14 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
         return PriorShiftAdapterFunc(
                     multipliers=(current_iter_class_freq/valid_class_freq),
                     calibrator_func=calibrator_func)
-
-
-class AbstractShiftWeightEstimator(object):
-    
-    # Should return the ratios of the weights for each class 
-    def __call__(self, valid_labels,
-                       tofit_initial_posterior_probs,
-                       valid_posterior_probs):
-        raise NotImplementedError()
-
-
-#effectively a wrapper around EMImbalanceAdapter
-class EMShiftWeightEstimator(AbstractShiftWeightEstimator):
-
-    def __init__(self, **em_imbalance_adapter_kwargs):
-        self.imbalance_adapter = EMImbalanceAdapter(
-            **em_imbalance_adapter_kwargs) 
-
-    def __call__(self, valid_labels, tofit_initial_posterior_probs,
-                      valid_posterior_probs=None): 
-        prior_shift_adapter_func = self.imbalance_adapter(
-            valid_labels=valid_labels,
-            tofit_initial_posterior_probs=tofit_initial_posterior_probs,
-            valid_posterior_probs=valid_posterior_probs)
-        return prior_shift_adapter_func.multipliers
         
 
-class BBSE(AbstractShiftWeightEstimator):
+class BBSEImbalanceAdapter(AbstractImbalanceAdapter):
 
-    def __init__(self, soft=False, calibrator_factory=None):
+    def __init__(self, soft=False, calibrator_factory=None, verbose=False):
         self.soft = soft
         self.calibrator_factory = calibrator_factory
+        self.verbose = verbose
 
     def __call__(self, valid_labels, tofit_initial_posterior_probs,
                        valid_posterior_probs):
@@ -225,5 +225,27 @@ class BBSE(AbstractShiftWeightEstimator):
                                         valid_labels[:,None,:]),axis=0) 
         inv_covariance = linalg.inv(covariance_matrix)
         weights = inv_covariance.dot(muhat_yhat)
-        return weights
+        if (self.verbose):
+            if (np.sum(weights < 0) > 0):
+                print("Heads up - some estimated weights were negative")
+        weights = 1.0*(weights*(weights >= 0)) #mask out negative weights
+
+        return PriorShiftAdapterFunc(
+                    multipliers=weights,
+                    calibrator_func=calibrator_func)
+
+
+#effectively a wrapper around an ImbalanceAdapter
+class ShiftWeightFromImbalanceAdapter(AbstractShiftWeightEstimator):
+
+    def __init__(self, imbalance_adapter):
+        self.imbalance_adapter = imbalance_adapter 
+
+    def __call__(self, valid_labels, tofit_initial_posterior_probs,
+                      valid_posterior_probs): 
+        prior_shift_adapter_func = self.imbalance_adapter(
+            valid_labels=valid_labels,
+            tofit_initial_posterior_probs=tofit_initial_posterior_probs,
+            valid_posterior_probs=valid_posterior_probs)
+        return prior_shift_adapter_func.multipliers
 

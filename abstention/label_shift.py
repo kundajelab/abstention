@@ -75,7 +75,7 @@ class NoWeightShift(AbstractShiftWeightEstimator):
 
     def __call__(self, valid_labels, tofit_initial_posterior_probs,
                        valid_posterior_probs):
-        return np.ones(valid_labels.shape[1])
+        return np.ones(valid_posterior_probs.shape[1])
 
 
 class EMImbalanceAdapter(AbstractImbalanceAdapter):
@@ -102,6 +102,8 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
             softmax_valid_labels =\
                 map_to_softmax_format_if_approrpiate(
                     values=valid_labels)
+        else:
+            softmax_valid_labels = None
 
         #if binary labels were provided, convert to softmax format
         # for consistency

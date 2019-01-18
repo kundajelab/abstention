@@ -1,10 +1,10 @@
 from __future__ import division, print_function, absolute_import
-from keras import backend as K
 import numpy as np
 from collections import OrderedDict
 
 
 def get_preact_func(model, task_idx):
+    from keras import backend as K
     preact_func = K.function([model.layers[0].input, K.learning_phase()],
                                    [model.layers[-2].output])
     def batched_func(data, learning_phase, batch_size):
@@ -20,6 +20,7 @@ def get_preact_func(model, task_idx):
 
 
 def get_embed_func(model, task_idx):
+    from keras import backend as K
     embed_func = K.function([model.layers[0].input, K.learning_phase()],
                                    [model.layers[-3].output])
     def batched_func(data, learning_phase, batch_size):

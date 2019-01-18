@@ -2,9 +2,8 @@ from distutils.core import setup
 
 if __name__== '__main__':
     setup(include_package_data=True,
-          description='Functions for abstaining',
-          url='NA',
-          download_url='NA',
+          description='Functions for abstention, calibration and label shift domain adaptation',
+          url='https://github.com/kundajelab/abstention',
           version='0.1.0.0',
           packages=['abstention'],
           setup_requires=[],

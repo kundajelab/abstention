@@ -13,8 +13,7 @@ See the examples folder for an IPython Notebook example.
 ## Installation
 
 ```
-git clone https://github.com/kundajelab/abstention.git #will clone the abstention repository
-pip install --editable abstention/ #install from the cloned repository. The "editable" flag means changes to the code will be picked up automatically.
+pip install abstention
 ```
 
 ## Contact

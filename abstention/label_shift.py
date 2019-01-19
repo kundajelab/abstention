@@ -217,16 +217,17 @@ class BBSEImbalanceAdapter(AbstractImbalanceAdapter):
         else:
             muhat_yhat = np.mean(hard_tofit_preds, axis=0) 
 
-        #prepare the covariance matrix
+        #prepare the "confusion" matrix (confusingly named as confusion
+        # matrices are usually normalized, but theirs isn't
         if (self.soft):
-            covariance_matrix = np.mean((
+            confusion_matrix = np.mean((
                 valid_posterior_probs[:,:,None]*
                 valid_labels[:,None,:]), axis=0)
         else:
-            covariance_matrix = np.mean((hard_valid_preds[:,:,None]*
+            confusion_matrix = np.mean((hard_valid_preds[:,:,None]*
                                         valid_labels[:,None,:]),axis=0) 
-        inv_covariance = linalg.inv(covariance_matrix)
-        weights = inv_covariance.dot(muhat_yhat)
+        inv_confusion = linalg.inv(confusion_matrix)
+        weights = inv_confusion.dot(muhat_yhat)
         if (self.verbose):
             if (np.sum(weights < 0) > 0):
                 print("Heads up - some estimated weights were negative")

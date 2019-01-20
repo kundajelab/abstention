@@ -699,8 +699,8 @@ class MarginalDeltaAuRocMixin(AbstractMarginalDeltaMetricMixin):
 
     def compute_abstention_score(self, est_metric, est_numpos, est_numneg,
                                        ppos, pos_cdfs, neg_cdfs):
-        return (ppos*((est_metric - neg_cdfs)/est_numpos) 
-                + (1-ppos)*((est_metric - (1-pos_cdfs))/est_numneg))
+        return (ppos*((est_metric - neg_cdfs)/(est_numpos-1)) 
+                + (1-ppos)*((est_metric - (1-pos_cdfs))/(est_numneg-1)))
 
 
 class MarginalDeltaAuRoc(MarginalDeltaAuRocMixin, MarginalDeltaMetric):
@@ -731,38 +731,32 @@ class MarginalDeltaAuPrcMixin(AbstractMarginalDeltaMetricMixin):
 
     def compute_abstention_score(self, est_metric, est_numpos, est_numneg,
                                        ppos, pos_cdfs, neg_cdfs):
-        pos_cdfs[-1] = -1.0 #prevent 0.0 warning
-        neg_cdfs[-1] = -1.0
-        precision_at_threshold =\
-            ((1-pos_cdfs)*est_numpos)/(
-             (1-pos_cdfs)*est_numpos + (1-neg_cdfs)*est_numneg)
-        precision_at_threshold[-1] = 1.0 #dealing with 0.0/0.0
-
         est_nneg_above = est_numneg*(1-neg_cdfs)
         est_npos_above = est_numpos*(1-pos_cdfs)
         #to prevent 0/0:
         est_npos_above[-1] = 1.0
         est_nneg_above[-1] = 0.0
-
-        #mep_pos = marginal effect on precision of evicting higher
-        #ranked positive example
-        #mep_pos = -est_nneg_above/np.square(est_npos_above + est_nneg_above) 
-        #mep_neg = est_npos_above/np.square(est_npos_above + est_nneg_above)
-        #cmep_pos = np.cumsum(ppos*mep_pos)
-        #cmep_neg = np.cumsum(ppos*mep_neg)
-
-        #slope_if_positive =\
-        #    (est_metric - precision_at_threshold + cmep_pos)/est_numpos
-        #slope_if_negative = cmep_neg/est_numpos
-
-        #return slope_if_positive*ppos + slope_if_negative*(1-ppos)
-
-        mcpr_term1 = est_npos_above/np.square(est_npos_above + est_nneg_above)
-        cmcpr_term1 = np.cumsum(ppos*mcpr_term1)
-        mcpr_term2 = -1.0/(est_npos_above + est_nneg_above)
-        cmcpr_term2 = np.cumsum(ppos*mcpr_term2)*ppos
-        slope = (ppos*(est_metric - precision_at_threshold)
-                 + cmcpr_term1 + cmcpr_term2)/est_numpos
+        precision_at_threshold = est_npos_above/(est_npos_above
+                                                 + est_nneg_above)
+        #mcpr is marginal change in precision at this threshold due
+        # to abstaining on an example at a higher threshold
+        num_examples_above = (est_npos_above + est_nneg_above)
+        mcpr_denom = np.maximum(num_examples_above - 1, 1E-7) #avoid div by 0
+        #mcpr_term1 is what happens if the example abstained on is a negative
+        mcpr_term1 = precision_at_threshold/mcpr_denom
+        #(mcpr_term1 + mcpr_term2) is what happens if the example abstain on  
+        # is a positive
+        mcpr_term2 = -1.0/mcpr_denom
+        #weighting by ppos is because only positives contribute to average
+        # precision score
+        #Need to subtract ppos*mcpr_termX because cumsum is inclusive
+        cmcpr_term1 = np.cumsum(ppos*mcpr_term1) - ppos*mcpr_term1
+        cmcpr_term2 = np.cumsum(ppos*mcpr_term2) - ppos*mcpr_term2
+        #compute the delta if evicted example is a positive
+        delta_if_positive = ((est_metric - precision_at_threshold)
+                             + (cmcpr_term1 + cmcpr_term2))/(est_numpos-1) 
+        delta_if_negative = cmcpr_term1/est_numpos 
+        slope = ppos*delta_if_positive + (1-ppos)*delta_if_negative
 
         return slope
 

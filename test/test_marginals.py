@@ -46,9 +46,16 @@ class TestMarginals(unittest.TestCase):
              for i in range(total_num)])-metric)
         empirical_ordering = [x[0] for x in sorted(enumerate(empirical_scores),
                                                    key=lambda x: x[1])]
-        spearman_corr = scipy.stats.mstats.spearmanr(abstention_scores, empirical_scores)
+        print([x for x in zip(labels, abstention_scores, empirical_scores)
+               if (np.abs(x[1]-x[2]) > 1E-7)])
+        spearman_corr = scipy.stats.mstats.spearmanr(abstention_scores[:],
+                                                     empirical_scores[:])
+        print(np.max(np.abs(np.array(abstention_scores)-
+                                 np.array(empirical_scores))))
+        assert (np.max(np.abs(np.array(abstention_scores)-
+                                  np.array(empirical_scores))) < 1E-7) 
         print(spearman_corr)
-        assert spearman_corr.correlation > 0.99
+        assert spearman_corr.correlation > 0.999
 
     def test_marginal_auroc(self): 
         self.apply_marginals_eval(

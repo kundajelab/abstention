@@ -1,11 +1,10 @@
-Metadata-Version: 1.1
+Metadata-Version: 1.0
 Name: abstention
-Version: 0.1
-Summary: Functions for abstaining
-Home-page: NA
+Version: 0.1.1.0
+Summary: Functions for abstention, calibration and label shift domain adaptation
+Home-page: https://github.com/kundajelab/abstention
 Author: UNKNOWN
 Author-email: UNKNOWN
 License: UNKNOWN
-Download-URL: NA
 Description: UNKNOWN
 Platform: UNKNOWN

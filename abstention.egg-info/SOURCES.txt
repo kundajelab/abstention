@@ -3,6 +3,7 @@ abstention/__init__.py
 abstention/abstention.py
 abstention/calibration.py
 abstention/figure_making_utils.py
+abstention/label_shift.py
 abstention/util.py
 abstention.egg-info/PKG-INFO
 abstention.egg-info/SOURCES.txt

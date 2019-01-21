@@ -515,7 +515,8 @@ class MarginalDeltaMetric(AbstainerFactory):
 
     def __init__(self, estimate_cdfs_from_valid=False,
                        estimate_imbalance_and_perf_from_valid=False,
-                       all_estimates_from_valid=False):
+                       all_estimates_from_valid=False,
+                       verbose=False):
         self.all_estimates_from_valid = all_estimates_from_valid
         if (self.all_estimates_from_valid):
             estimate_cdfs_from_valid = True
@@ -523,6 +524,7 @@ class MarginalDeltaMetric(AbstainerFactory):
         self.estimate_cdfs_from_valid = estimate_cdfs_from_valid
         self.estimate_imbalance_and_perf_from_valid =\
              estimate_imbalance_and_perf_from_valid
+        self.verbose = verbose
 
     def estimate_metric(self, ppos, pos_cdfs, neg_cdfs):
         raise NotImplementedError()
@@ -541,33 +543,37 @@ class MarginalDeltaMetric(AbstainerFactory):
         if (self.all_estimates_from_valid):
             print("Estimating everything relative to validation set")
 
-        #get the original auROC from the validation set
-        valid_est_metric = np.array(self.compute_metric(
-                                         y_true=valid_labels,
-                                         y_score=valid_posterior))
-        valid_num_positives = np.sum(valid_labels==1)
-        valid_num_negatives = np.sum(valid_labels==0)
+        if (self.estimate_cdfs_from_valid
+            or self.estimate_imbalance_and_perf_from_valid): 
+            #get the original auROC from the validation set
+            valid_est_metric = np.array(self.compute_metric(
+                                             y_true=valid_labels,
+                                             y_score=valid_posterior))
+            valid_num_positives = np.sum(valid_labels==1)
+            valid_num_negatives = np.sum(valid_labels==0)
 
-        #compute the cdf for the positives and the negatives from valid set
-        sorted_labels_and_probs = sorted(zip(valid_labels, valid_posterior),
-                                         key=lambda x: x[1]) 
-        running_sum_positives = [0]
-        running_sum_negatives = [0]
-        for label, prob in sorted_labels_and_probs:
-            if (label==1):
-                running_sum_positives.append(running_sum_positives[-1]+1)
-                running_sum_negatives.append(running_sum_negatives[-1])
-            else:
-                running_sum_positives.append(running_sum_positives[-1])
-                running_sum_negatives.append(running_sum_negatives[-1]+1)
-        valid_positives_cdf =\
-            np.array(running_sum_positives)/float(valid_num_positives) 
-        valid_negatives_cdf =\
-            np.array(running_sum_negatives)/float(valid_num_negatives) 
+            #compute the cdf for the positives and the negatives from valid set
+            sorted_labels_and_probs = sorted(
+                zip(valid_labels, valid_posterior), key=lambda x: x[1]) 
+            running_sum_positives = [0]
+            running_sum_negatives = [0]
+            for label, prob in sorted_labels_and_probs:
+                if (label==1):
+                    running_sum_positives.append(running_sum_positives[-1]+1)
+                    running_sum_negatives.append(running_sum_negatives[-1])
+                else:
+                    running_sum_positives.append(running_sum_positives[-1])
+                    running_sum_negatives.append(running_sum_negatives[-1]+1)
+            valid_positives_cdf =\
+                np.array(running_sum_positives)/float(valid_num_positives) 
+            valid_negatives_cdf =\
+                np.array(running_sum_negatives)/float(valid_num_negatives) 
 
-        #validation_vals are a 3-tuple of prob, positive_cdf, neg_cdf
-        validation_vals = list(zip([x[1] for x in sorted_labels_and_probs],
-                               valid_positives_cdf, valid_negatives_cdf))
+            #validation_vals are a 3-tuple of prob, positive_cdf, neg_cdf
+            validation_vals = list(zip([x[1] for x in sorted_labels_and_probs],
+                                   valid_positives_cdf, valid_negatives_cdf))
+        else:
+            valid_est_metric = None
 
 
         def abstaining_func(posterior_probs,
@@ -576,52 +582,62 @@ class MarginalDeltaMetric(AbstainerFactory):
             #test_posterior_and_index have 2-tuples of prob, testing index
             test_posterior_and_index = [(x[1], x[0]) for x in
                                         enumerate(posterior_probs)]
-            sorted_valid_and_test =\
-                sorted(validation_vals+test_posterior_and_index,
-                       key=lambda x: x[0])
-            pos_cdf = 0
-            neg_cdf = np.finfo(np.float32).eps
-            test_sorted_posterior_probs = []
-            test_sorted_pos_cdfs = []
-            test_sorted_neg_cdfs = []
-            test_sorted_indices = []
-            to_return = np.zeros(len(posterior_probs))
-            for value in sorted_valid_and_test:
-                is_from_valid = True if len(value)==3 else False 
-                if (is_from_valid):
-                    pos_cdf = value[1]
-                    neg_cdf = max(value[2],np.finfo(np.float32).eps)
-                else:
-                    ppos = value[0]
-                    idx = value[1]
-                    test_sorted_posterior_probs.append(ppos)
-                    test_sorted_indices.append(idx)
-                    test_sorted_pos_cdfs.append(pos_cdf)
-                    test_sorted_neg_cdfs.append(neg_cdf)
-            test_sorted_posterior_probs = np.array(test_sorted_posterior_probs)
-            test_sorted_pos_cdfs = np.array(test_sorted_pos_cdfs)
-            test_sorted_neg_cdfs = np.array(test_sorted_neg_cdfs)
+            if (self.estimate_cdfs_from_valid
+                or self.estimate_imbalance_and_perf_from_valid): 
+                sorted_valid_and_test =\
+                    sorted(validation_vals+test_posterior_and_index,
+                           key=lambda x: x[0])
+                pos_cdf = 0
+                neg_cdf = np.finfo(np.float32).eps
+                test_sorted_posterior_probs = []
+                test_sorted_pos_cdfs = []
+                test_sorted_neg_cdfs = []
+                test_sorted_indices = []
+                to_return = np.zeros(len(posterior_probs))
+                for value in sorted_valid_and_test:
+                    is_from_valid = True if len(value)==3 else False 
+                    if (is_from_valid):
+                        pos_cdf = value[1]
+                        neg_cdf = max(value[2],np.finfo(np.float32).eps)
+                    else:
+                        ppos = value[0]
+                        idx = value[1]
+                        test_sorted_posterior_probs.append(ppos)
+                        test_sorted_indices.append(idx)
+                        test_sorted_pos_cdfs.append(pos_cdf)
+                        test_sorted_neg_cdfs.append(neg_cdf)
+                test_sorted_posterior_probs =\
+                    np.array(test_sorted_posterior_probs)
+                test_sorted_pos_cdfs = np.array(test_sorted_pos_cdfs)
+                test_sorted_neg_cdfs = np.array(test_sorted_neg_cdfs)
 
-            valid_frac_pos = valid_num_positives/\
-                             (valid_num_positives+valid_num_negatives)
-            valid_frac_neg = valid_num_negatives/\
-                             (valid_num_positives+valid_num_negatives)
-            if (self.all_estimates_from_valid):
-                est_numpos_from_valid = valid_num_positives
-                est_numneg_from_valid = valid_num_negatives
+                valid_frac_pos = valid_num_positives/\
+                                 (valid_num_positives+valid_num_negatives)
+                valid_frac_neg = valid_num_negatives/\
+                                 (valid_num_positives+valid_num_negatives)
+                if (self.all_estimates_from_valid):
+                    est_numpos_from_valid = valid_num_positives
+                    est_numneg_from_valid = valid_num_negatives
+                else:
+                    est_numpos_from_valid = valid_frac_pos*len(posterior_probs)
+                    est_numneg_from_valid = valid_frac_neg*len(posterior_probs)
             else:
-                est_numpos_from_valid = valid_frac_pos*len(posterior_probs)
-                est_numneg_from_valid = valid_frac_neg*len(posterior_probs)
-            
+                (test_sorted_indices,
+                 test_sorted_posterior_probs) = [np.array(x) for x in zip(*
+                  sorted(enumerate(posterior_probs),
+                         key=lambda x: x[1]))]
+                est_numpos_from_valid = None
+                est_numneg_from_valid = None
+                test_sorted_pos_cdfs = None
+                test_sorted_neg_cdfs = None
+                
+             
             est_numpos_from_data = np.sum(test_sorted_posterior_probs)
             est_numneg_from_data = np.sum(1-test_sorted_posterior_probs)
             est_pos_cdfs_from_data =\
                 (np.cumsum(test_sorted_posterior_probs))/est_numpos_from_data
             est_neg_cdfs_from_data =\
                 (np.cumsum(1-test_sorted_posterior_probs))/est_numneg_from_data
-
-            sorted_idx_and_val = sorted(enumerate(posterior_probs),
-                                        key=lambda x: x[1])
 
             if (self.estimate_cdfs_from_valid):
                 est_metric_from_data=self.estimate_metric(
@@ -634,14 +650,8 @@ class MarginalDeltaMetric(AbstainerFactory):
                     pos_cdfs=est_pos_cdfs_from_data,
                     neg_cdfs=est_neg_cdfs_from_data)
 
-            print("valid est metric", valid_est_metric)
-            print("data est metric", est_metric_from_data)
-            sys.stdout.flush()
-            if (np.abs(est_metric_from_data-valid_est_metric) > 0.01):
-                print("If the perf on the validation set is "
-                      "very different from the estimated perf "
-                      "on the test data, it may be a sign that "
-                      "the calibration is poor!!!") 
+            if (self.verbose):
+                print("data est metric", est_metric_from_data)
                 sys.stdout.flush()
 
             test_sorted_abstention_scores = self.compute_abstention_score(

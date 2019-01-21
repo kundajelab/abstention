@@ -19,6 +19,9 @@ class PriorShiftAdapterFunc(AbstractImbalanceAdapterFunc):
 
     def __call__(self, unadapted_posterior_probs):
 
+        unadapted_posterior_probs =\
+            self.calibrator_func(unadapted_posterior_probs)
+
         #if supplied probs are in binary format, convert to softmax format
         if (len(unadapted_posterior_probs.shape)==1
             or unadapted_posterior_probs.shape[1]==1):
@@ -31,9 +34,6 @@ class PriorShiftAdapterFunc(AbstractImbalanceAdapterFunc):
         else:
             softmax_unadapted_posterior_probs =\
                 unadapted_posterior_probs
-
-        softmax_unadapted_posterior_probs =\
-            self.calibrator_func(softmax_unadapted_posterior_probs)
 
         adapted_posterior_probs_unnorm =(
             softmax_unadapted_posterior_probs*self.multipliers[None,:])
@@ -60,6 +60,13 @@ class AbstractImbalanceAdapter(object):
     def __call__(self, valid_labels, tofit_initial_posterior_probs,
                        valid_posterior_probs):
         raise NotImplementedError()
+
+
+class NoAdaptation(object):
+
+    def __call__(self, valid_labels, tofit_initial_posterior_probs,
+                      valid_posterior_probs):
+        return lambda unadapted_posterior_probs: unadapted_posterior_probs
 
 
 class AbstractShiftWeightEstimator(object):
@@ -95,18 +102,6 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
                        tofit_initial_posterior_probs,
                        valid_posterior_probs):
 
-        softmax_valid_posterior_probs =\
-            map_to_softmax_format_if_approrpiate(
-                values=valid_posterior_probs)
-        if (valid_labels is not None):
-            softmax_valid_labels =\
-                map_to_softmax_format_if_approrpiate(
-                    values=valid_labels)
-        else:
-            softmax_valid_labels = None
-
-        #if binary labels were provided, convert to softmax format
-        # for consistency
         if (self.calibrator_factory is not None):
             assert valid_posterior_probs is not None 
             calibrator_func = self.calibrator_factory(
@@ -115,19 +110,35 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
                 posterior_supplied=True) 
         else:
             calibrator_func = lambda x: x
-
+        print("before calib - valid",np.mean(valid_posterior_probs))
+        print("before calib - test",np.mean(tofit_initial_posterior_probs))
         valid_posterior_probs = calibrator_func(valid_posterior_probs)
+        tofit_initial_posterior_probs = calibrator_func(
+            tofit_initial_posterior_probs)
+        print("after calib - valid",np.mean(valid_posterior_probs))
+        print("after calib",np.mean(tofit_initial_posterior_probs))
+
+        #if binary labels were provided, convert to softmax format
+        # for consistency
+        softmax_valid_posterior_probs =\
+            map_to_softmax_format_if_approrpiate(
+                values=valid_posterior_probs)
+        softmax_initial_posterior_probs =\
+            map_to_softmax_format_if_approrpiate(
+                values=tofit_initial_posterior_probs)
+        if (valid_labels is not None):
+            softmax_valid_labels =\
+                map_to_softmax_format_if_approrpiate(
+                    values=valid_labels)
+        else:
+            softmax_valid_labels = None
+
         #compute the class frequencies based on the posterior probs to ensure
         # that if the valid posterior probs are supplied for "to fit", then
         # no shift is estimated
-        valid_class_freq = np.mean(valid_posterior_probs, axis=0)
-
+        valid_class_freq = np.mean(softmax_valid_posterior_probs, axis=0)
         if (self.verbose):
             print("Original class freq", valid_class_freq)
-       
-        softmax_initial_posterior_probs =\
-            calibrator_func(map_to_softmax_format_if_approrpiate(
-                values=tofit_initial_posterior_probs))
 
         #initialization_weight_ratio is a method that can be used to
         # estimate the ratios between the label frequencies in the
@@ -167,6 +178,8 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
 
             next_iter_class_freq = np.mean(
                 current_iter_posterior_probs, axis=0) 
+            if (self.verbose):
+                print("next it",next_iter_class_freq)
             iter_number += 1
         if (self.verbose):
             print("Finished on iteration",iter_number,"with delta",

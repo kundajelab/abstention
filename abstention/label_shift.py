@@ -23,18 +23,9 @@ class PriorShiftAdapterFunc(AbstractImbalanceAdapterFunc):
             self.calibrator_func(unadapted_posterior_probs)
 
         #if supplied probs are in binary format, convert to softmax format
-        if (len(unadapted_posterior_probs.shape)==1
-            or unadapted_posterior_probs.shape[1]==1):
-            softmax_unadapted_posterior_probs = np.zeros(
-                (len(unadapted_posterior_probs),2)) 
-            softmax_unadapted_posterior_probs[:,0] =\
-                unadapted_posterior_probs
-            softmax_unadapted_posterior_probs[:,1] =\
-                1-unadapted_posterior_probs
-        else:
-            softmax_unadapted_posterior_probs =\
-                unadapted_posterior_probs
-
+        softmax_unadapted_posterior_probs =\
+            map_to_softmax_format_if_approrpiate(
+                values=unadapted_posterior_probs) 
         adapted_posterior_probs_unnorm =(
             softmax_unadapted_posterior_probs*self.multipliers[None,:])
         adapted_posterior_probs = (
@@ -110,13 +101,9 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
                 posterior_supplied=True) 
         else:
             calibrator_func = lambda x: x
-        print("before calib - valid",np.mean(valid_posterior_probs))
-        print("before calib - test",np.mean(tofit_initial_posterior_probs))
         valid_posterior_probs = calibrator_func(valid_posterior_probs)
         tofit_initial_posterior_probs = calibrator_func(
             tofit_initial_posterior_probs)
-        print("after calib - valid",np.mean(valid_posterior_probs))
-        print("after calib",np.mean(tofit_initial_posterior_probs))
 
         #if binary labels were provided, convert to softmax format
         # for consistency

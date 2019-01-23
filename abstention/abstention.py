@@ -751,7 +751,7 @@ class MarginalDeltaAuPrcMixin(AbstractMarginalDeltaMetricMixin):
         #mcpr is marginal change in precision at this threshold due
         # to abstaining on an example at a higher threshold
         num_examples_above = (est_npos_above + est_nneg_above)
-        mcpr_denom = np.maximum(num_examples_above - 1, 1E-7) #avoid div by 0
+        mcpr_denom = np.maximum(num_examples_above - 1, 1) #avoid explosion
         #mcpr_term1 is what happens if the example abstained on is a negative
         mcpr_term1 = precision_at_threshold/mcpr_denom
         #(mcpr_term1 + mcpr_term2) is what happens if the example abstain on  

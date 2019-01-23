@@ -379,11 +379,12 @@ class WeightedKappa(AbstainerFactory):
             expected_impact_abstentions = []
             for example_pred_class,example in zip(predictions,posterior_probs):
                 new_est_kappa = 0
+                #iterate over each possible label class
                 for (label_class_idx,label_class_prob) in enumerate(example):
                     new_pred_class_numbers = np.array(pred_class_numbers) 
                     new_pred_class_numbers[example_pred_class] -= 1
                     new_est_label_numbers = np.array(est_label_numbers)
-                    new_est_label_numbers[label_class_idx] -= label_class_prob 
+                    new_est_label_numbers[label_class_idx] -= 1 
                     new_expected_confusion_matrix = (
                         (new_pred_class_numbers[:,None]/
                          float(len(posterior_probs)-1))*

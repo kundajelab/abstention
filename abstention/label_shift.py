@@ -1,7 +1,7 @@
 from __future__ import division, print_function
 import numpy as np
 from .calibration import (inverse_softmax, get_hard_preds,
-                          map_to_softmax_format_if_approrpiate)
+                          map_to_softmax_format_if_appropriate)
 from scipy import linalg
 
 
@@ -24,7 +24,7 @@ class PriorShiftAdapterFunc(AbstractImbalanceAdapterFunc):
 
         #if supplied probs are in binary format, convert to softmax format
         softmax_unadapted_posterior_probs =\
-            map_to_softmax_format_if_approrpiate(
+            map_to_softmax_format_if_appropriate(
                 values=unadapted_posterior_probs) 
         adapted_posterior_probs_unnorm =(
             softmax_unadapted_posterior_probs*self.multipliers[None,:])
@@ -108,14 +108,14 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
         #if binary labels were provided, convert to softmax format
         # for consistency
         softmax_valid_posterior_probs =\
-            map_to_softmax_format_if_approrpiate(
+            map_to_softmax_format_if_appropriate(
                 values=valid_posterior_probs)
         softmax_initial_posterior_probs =\
-            map_to_softmax_format_if_approrpiate(
+            map_to_softmax_format_if_appropriate(
                 values=tofit_initial_posterior_probs)
         if (valid_labels is not None):
             softmax_valid_labels =\
-                map_to_softmax_format_if_approrpiate(
+                map_to_softmax_format_if_appropriate(
                     values=valid_labels)
         else:
             softmax_valid_labels = None

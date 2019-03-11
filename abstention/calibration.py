@@ -10,7 +10,7 @@ from sklearn.isotonic import IsotonicRegression as IR
 from sklearn.linear_model import LogisticRegression as LR
 
 
-def map_to_softmax_format_if_approrpiate(values):
+def map_to_softmax_format_if_appropriate(values):
     if (len(values.shape)==1 or values.shape[1]==1):
         values = np.squeeze(values)
         softmax_values = np.zeros((len(values),2))

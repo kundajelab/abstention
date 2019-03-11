@@ -1,8 +1,10 @@
 from __future__ import division, print_function, absolute_import
 import numpy as np
 from sklearn.metrics import roc_auc_score
+from scipy.stats import entropy
 #from sklearn.metrics import average_precision_score
 import sys
+from .calibration import map_to_softmax_format_if_appropriate
 
 
 def basic_average_precision_score(y_true, y_score):
@@ -245,6 +247,30 @@ class Entropy(AbstainerFactory):
                             embeddings=None):
             assert len(posterior_probs.shape)==2
             return -np.sum(posterior_probs*np.log(posterior_probs),axis=1)
+        return abstaining_func
+
+
+#Jenson-Shannon divergence from class freqs
+class OneMinusJSDivFromClassFreq(AbstainerFactory):
+
+    def __call__(self, valid_labels=None, valid_posterior=None,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
+        #softmax_valid_labels =\
+        #    map_to_softmax_format_if_appropriate(values=valid_labels)
+        #mean_class_freqs = np.mean(softmax_valid_labels, axis=0)
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            softmax_posterior_probs =\
+                map_to_softmax_format_if_appropriate(values=posterior_probs) 
+            mean_class_freqs = np.mean(softmax_posterior_probs, axis=0)
+            assert len(softmax_posterior_probs.shape)==2
+            M = 0.5*(mean_class_freqs[None,:] + softmax_posterior_probs)  
+            jsd = (np.array([(0.5*entropy(pk=pk, qk=m)
+                              + 0.5*entropy(pk=mean_class_freqs, qk=m))
+                             for (m,pk) in zip(M, softmax_posterior_probs)]))
+            return 1-jsd
         return abstaining_func
 
 

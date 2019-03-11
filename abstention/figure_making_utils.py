@@ -2,6 +2,7 @@ from __future__ import division, print_function
 import numpy as np
 
 #srs: signed rank sum test
+#critical values for test statistics here: https://www.oreilly.com/library/view/nonparametric-statistics-a/9781118840429/bapp02.xhtml
 def wilcox_srs(vals1, vals2):   
     vals1 = np.array(vals1)
     vals2 = np.array(vals2)
@@ -9,8 +10,6 @@ def wilcox_srs(vals1, vals2):
                      enumerate(sorted(vals1-vals2, key=lambda x: abs(x)))])
     sum_positives = sum([x for x in signed_ranks if x > 0]+[1e-7])
     sum_negatives = sum([x for x in signed_ranks if x < 0]+[-1e-7])
-    #0.05 threshold for one-sided test when N=10 is 10:
-    #http://www.real-statistics.com/statistics-tables/wilcoxon-signed-ranks-table/
     if (np.abs(sum_negatives) < sum_positives):
         return np.abs(sum_negatives)
     else:

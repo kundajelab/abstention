@@ -223,6 +223,69 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
             return -np.abs(posterior_probs-threshold) 
         return abstaining_func
 
+#Based on
+# Fumera, Giorgio, Fabio Roli, and Giorgio Giacinto.
+# "Reject option with multiple thresholds."
+# Pattern recognition 33.12 (2000): 2099-2101.
+class DualThresholdsFromPointFiveOnValidSet(AbstainerFactory):
+
+    def __init__(self, fracs_to_abstain_on, metric):
+        #fracts to abstain on = abstention fractions to consder when
+        # returning rankings
+        self.fracs_to_abstain_on = fracs_to_abstain_on
+        self.metric = metric
+
+    def __call__(self, valid_labels, valid_posterior,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
+
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            sorted_posterior_probs = sorted(posterior_probs)
+            idx_of_point_five = np.searchsorted(a=sorted_posterior_probs,
+                                                v=0.5) 
+            print("percentile point five",
+                  idx_of_point_five/len(posterior_probs))
+
+            abstention_thresholds = []
+            for frac_to_abstain in self.fracs_to_abstain_on:
+                num_to_abstain_on = int(len(posterior_probs)
+                                        *frac_to_abstain)
+                thresh_plus_perf = []
+                for left_offset in range(0, num_to_abstain_on):
+                    left_idx = idx_of_point_five-left_offset
+                    right_idx = min(left_idx + num_to_abstain_on,
+                                    len(posterior_probs)-1)
+                    left_thresh = sorted_posterior_probs[left_idx]
+                    right_thresh = sorted_posterior_probs[right_idx]
+                   
+                    (subset_valid_labels, subset_valid_posterior) =\
+                      zip(*[x for x in
+                            zip(valid_labels, valid_posterior)
+                            if ((x[1] < left_thresh)
+                                or (x[1] > right_thresh))])
+                    perf = self.metric(y_true=subset_valid_labels,
+                                       y_score=subset_valid_posterior) 
+                    thresh_plus_perf.append(
+                     ((left_thresh, right_thresh), perf))
+                ((best_left_thresh, best_right_thresh), perf) =\
+                    max(thresh_plus_perf, key=lambda x: x[1]) 
+                abstention_thresholds.append((best_left_thresh,
+                                              best_right_thresh))
+
+            print(abstention_thresholds)
+            abstention_scores = []
+            for posterior_prob in posterior_probs:
+                score = 0 
+                for (left_thresh, right_thresh) in abstention_thresholds:
+                    if ((posterior_prob >= left_thresh) and
+                        (posterior_prob <= right_thresh)):
+                        score += 1 
+                abstention_scores.append(score)
+            return np.array(abstention_scores)
+        return abstaining_func 
+
 
 class DistMaxClassProbFromOne(AbstainerFactory):
 

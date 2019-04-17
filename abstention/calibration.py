@@ -143,10 +143,8 @@ class TempScaling(CalibratorFactory):
             grads_t = ((sum_preact_times_exp/sum_exp
                         - notsb_logits_trueclass)/\
                         (float(t)**2))
-            grads_b =(
-                (valid_labels +
-                 ((1-valid_labels)/np.exp(tsb_logits_trueclass)[:,None]))
-                + (exp_tsb_logits/sum_exp[:,None])) 
+            grads_b = valid_labels - 1.0/(np.exp(tsb_logits_trueclass)[:,None])
+            #multiply by -1 because we care about *negative* log likelihood
             mean_grad_t = -np.mean(grads_t)
             mean_grads_b = -np.mean(grads_b, axis=0)
             #only supply the gradients for the bias positions that

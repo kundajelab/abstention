@@ -143,7 +143,7 @@ class TempScaling(CalibratorFactory):
             grads_t = ((sum_preact_times_exp/sum_exp
                         - notsb_logits_trueclass)/\
                         (float(t)**2))
-            grads_b = valid_labels - 1.0/(np.exp(tsb_logits_trueclass)[:,None])
+            grads_b = valid_labels - 1.0/(sum_exp[:,None])
             #multiply by -1 because we care about *negative* log likelihood
             mean_grad_t = -np.mean(grads_t)
             mean_grads_b = -np.mean(grads_b, axis=0)

@@ -167,14 +167,14 @@ class TempScaling(CalibratorFactory):
             print("Original ECE is: ",original_ece)
             
         optimization_result = scipy.optimize.minimize(
-                                  #fun=eval_func,
-                                  fun=lambda x: eval_func(x)[0],
+                                  fun=eval_func,
+                                  #fun=lambda x: eval_func(x)[0],
                                   x0=np.array([1.0]+[0.0 for x in
                                                      self.bias_positions]),
                                   bounds=[(0,None)]+[(None,None) for x in
                                                      self.bias_positions],
-                                  #jac=True,
-                                  jac=False,
+                                  jac=True,
+                                  #jac=False,
                                   method='L-BFGS-B',
                                   tol=1e-07,
                                   **self.lbfgs_kwargs)

@@ -4,7 +4,7 @@ if __name__== '__main__':
     setup(include_package_data=True,
           description='Functions for abstention, calibration and label shift domain adaptation',
           url='https://github.com/kundajelab/abstention',
-          version='0.1.2.0',
+          version='0.1.2.1',
           packages=['abstention'],
           setup_requires=[],
           install_requires=['numpy>=1.9',

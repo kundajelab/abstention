@@ -93,18 +93,6 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
                        tofit_initial_posterior_probs,
                        valid_posterior_probs):
 
-        if (self.calibrator_factory is not None):
-            assert valid_posterior_probs is not None 
-            calibrator_func = self.calibrator_factory(
-                valid_preacts=softmax_valid_posterior_probs,
-                valid_labels=softmax_valid_labels,
-                posterior_supplied=True) 
-        else:
-            calibrator_func = lambda x: x
-        valid_posterior_probs = calibrator_func(valid_posterior_probs)
-        tofit_initial_posterior_probs = calibrator_func(
-            tofit_initial_posterior_probs)
-
         #if binary labels were provided, convert to softmax format
         # for consistency
         softmax_valid_posterior_probs =\
@@ -119,6 +107,19 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
                     values=valid_labels)
         else:
             softmax_valid_labels = None
+      
+        #fit calibration if needed
+        if (self.calibrator_factory is not None):
+            assert valid_posterior_probs is not None 
+            calibrator_func = self.calibrator_factory(
+                valid_preacts=softmax_valid_posterior_probs,
+                valid_labels=softmax_valid_labels,
+                posterior_supplied=True) 
+        else:
+            calibrator_func = lambda x: x
+        valid_posterior_probs = calibrator_func(valid_posterior_probs)
+        tofit_initial_posterior_probs = calibrator_func(
+            tofit_initial_posterior_probs)
 
         #compute the class frequencies based on the posterior probs to ensure
         # that if the valid posterior probs are supplied for "to fit", then

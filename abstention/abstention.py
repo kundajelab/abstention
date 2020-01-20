@@ -2,9 +2,39 @@ from __future__ import division, print_function, absolute_import
 import numpy as np
 from sklearn.metrics import roc_auc_score
 from scipy.stats import entropy
+import scipy.signal
 #from sklearn.metrics import average_precision_score
 import sys
 from .calibration import map_to_softmax_format_if_appropriate
+from scipy.interpolate import interp1d
+
+
+def zeroinfrontcumsum(vals):
+    return np.array([0]+list(np.cumsum(vals)))
+
+
+def get_pos_and_neg_cumsum(labels):
+    pos_cumsum = zeroinfrontcumsum(labels)
+    neg_cumsum = zeroinfrontcumsum(1-labels)
+    return pos_cumsum, neg_cumsum
+
+
+def assertsorted_average_precision_score(y_true, y_score):
+    #assert y_score is sorted
+    assert np.min(y_score[1:]-y_score[:-1]) >= 0.0, "y_score must be sorted!"
+    return sorted_average_precision_score(y_true, y_score)
+
+
+def sorted_average_precision_score(y_true, y_score):
+    cumsum_pos = zeroinfrontcumsum(y_true)
+    cumsum_neg = zeroinfrontcumsum(1-y_true)
+    num_pos = cumsum_pos[-1] 
+    num_neg = cumsum_neg[-1] 
+    num_pos_above = num_pos - cumsum_pos[:-1]
+    num_neg_above = num_neg - cumsum_neg[:-1]
+    precisions = num_pos_above/(num_pos_above+num_neg_above).astype("float64")
+    average_precision = np.sum(y_true*precisions)/(num_pos)
+    return average_precision
 
 
 def basic_average_precision_score(y_true, y_score):
@@ -13,15 +43,8 @@ def basic_average_precision_score(y_true, y_score):
     sorted_y_true, sorted_y_score = zip(*sorted(zip(y_true, y_score),
                                                  key=lambda x: x[1]))
     sorted_y_true = np.array(sorted_y_true).astype("float64")
-    num_pos = np.sum(sorted_y_true)
-    num_neg = np.sum(1-sorted_y_true)
-    num_pos_above = num_pos - np.cumsum(sorted_y_true)
-    num_neg_above = num_neg - np.cumsum(1-sorted_y_true)
-    num_pos_above[-1] = 1.0
-    num_neg_above[-1] = 0.0
-    precisions = num_pos_above/(num_pos_above+num_neg_above).astype("float64")
-    average_precision = np.sum(sorted_y_true*precisions)/(num_pos)
-    return average_precision
+    return sorted_average_precision_score(y_true=sorted_y_true,
+                                          y_score=sorted_y_score)
 
 average_precision_score = basic_average_precision_score
 
@@ -223,6 +246,7 @@ class NegPosteriorDistanceFromThreshold(AbstainerFactory):
             return -np.abs(posterior_probs-threshold) 
         return abstaining_func
 
+
 #Based on
 # Fumera, Giorgio, Fabio Roli, and Giorgio Giacinto.
 # "Reject option with multiple thresholds."
@@ -238,6 +262,11 @@ class DualThresholdsFromPointFiveOnValidSet(AbstainerFactory):
     def __call__(self, valid_labels, valid_posterior,
                        valid_uncert=None, train_embeddings=None,
                        train_labels=None):
+        (sorted_valid_posterior, sorted_valid_labels) =\
+            zip(*sorted(zip(valid_posterior,valid_labels),
+            key=lambda x: x[0]))
+        sorted_valid_posterior = np.array(sorted_valid_posterior)
+        sorted_valid_labels = np.array(sorted_valid_labels)
 
         def abstaining_func(posterior_probs,
                             uncertainties=None,
@@ -245,8 +274,6 @@ class DualThresholdsFromPointFiveOnValidSet(AbstainerFactory):
             sorted_posterior_probs = sorted(posterior_probs)
             idx_of_point_five = np.searchsorted(a=sorted_posterior_probs,
                                                 v=0.5) 
-            print("percentile point five",
-                  idx_of_point_five/len(posterior_probs))
 
             abstention_thresholds = []
             for frac_to_abstain in self.fracs_to_abstain_on:
@@ -262,19 +289,18 @@ class DualThresholdsFromPointFiveOnValidSet(AbstainerFactory):
                    
                     (subset_valid_labels, subset_valid_posterior) =\
                       zip(*[x for x in
-                            zip(valid_labels, valid_posterior)
+                            zip(sorted_valid_labels, sorted_valid_posterior)
                             if ((x[1] < left_thresh)
                                 or (x[1] > right_thresh))])
-                    perf = self.metric(y_true=subset_valid_labels,
-                                       y_score=subset_valid_posterior) 
+                    perf = self.metric(
+                        y_true=np.array(subset_valid_labels),
+                        y_score=np.array(subset_valid_posterior)) 
                     thresh_plus_perf.append(
                      ((left_thresh, right_thresh), perf))
                 ((best_left_thresh, best_right_thresh), perf) =\
                     max(thresh_plus_perf, key=lambda x: x[1]) 
                 abstention_thresholds.append((best_left_thresh,
                                               best_right_thresh))
-
-            print(abstention_thresholds)
             abstention_scores = []
             for posterior_prob in posterior_probs:
                 score = 0 
@@ -403,91 +429,6 @@ def weighted_kappa_metric(predprobs, true_labels, weights,
                          for (x,y) in zip(predictions,true_labels)])/
                      float(len(predictions)))
     return 1 - numerator/denominator
-         
-
-class WeightedKappa(AbstainerFactory):
-
-    def __init__(self, weights, mode, estimate_class_imbalance_from_valid=False,
-                       verbose=True):
-        self.weights = weights
-        self.mode=mode
-        self.estimate_class_imbalance_from_valid =\
-            estimate_class_imbalance_from_valid
-        self.verbose = verbose
-
-    def __call__(self, valid_labels=None, valid_posterior=None,
-                       valid_uncert=None, train_embeddings=None,
-                       train_labels=None):
-
-        #one-hot encoded validation labels expected
-        if (self.estimate_class_imbalance_from_valid):
-            assert valid_labels is not None
-            assert valid_posterior is not None
-            assert np.max(valid_labels)==1.0
-            assert valid_labels.shape[1]==self.weights.shape[1]
-            assert valid_labels.shape[1]==self.weights.shape[0]
-            assert valid_posterior.shape[1]==self.weights.shape[1]
-            assert valid_posterior.shape[1]==self.weights.shape[0]
-            valid_label_fractions =(
-                np.sum(valid_labels,axis=0)/float(valid_labels.shape[0]))
-            if (self.verbose):
-                print("validation set weighted kappa", 
-                       weighted_kappa_metric(
-                        predprobs=valid_posterior,
-                        true_labels=valid_labels,
-                        weights=self.weights, mode=self.mode))
-                print("validation set estimated weighted kappa from probs", 
-                       weighted_kappa_metric(
-                        predprobs=valid_posterior,
-                        true_labels=valid_posterior,
-                    weights=self.weights, mode=self.mode))
-
-        def abstaining_func(posterior_probs,
-                            uncertainties=None,
-                            embeddings=None):
-            assert posterior_probs.shape[1]==self.weights.shape[1]
-            assert posterior_probs.shape[1]==self.weights.shape[0]
-            est_label_numbers = (valid_label_fractions*len(posterior_probs) 
-              if self.estimate_class_imbalance_from_valid
-              else np.sum(posterior_probs,axis=0))
-            predictions = get_weighted_kappa_predictions(
-                predprobs=posterior_probs, weights=self.weights,
-                mode=self.mode) 
-            pred_class_numbers = np.array([
-                np.sum(predictions==i)
-                for i in range(posterior_probs.shape[1])])
-            expected_confusion_matrix = (
-                (pred_class_numbers[:,None]/float(len(posterior_probs)))*
-                est_label_numbers[None,:])
-            est_denominator = np.sum(expected_confusion_matrix*self.weights)
-            est_numerator = np.sum([np.sum(self.weights[x]*y)
-                             for (x,y) in zip(predictions,
-                                              posterior_probs)])
-            est_kappa = (1 - (est_denominator/est_numerator))
-            #compute the difference abtaining with each example 
-            expected_impact_abstentions = []
-            for example_pred_class,example in zip(predictions,posterior_probs):
-                new_est_kappa = 0
-                #iterate over each possible label class
-                for (label_class_idx,label_class_prob) in enumerate(example):
-                    new_pred_class_numbers = np.array(pred_class_numbers) 
-                    new_pred_class_numbers[example_pred_class] -= 1
-                    new_est_label_numbers = np.array(est_label_numbers)
-                    new_est_label_numbers[label_class_idx] -= 1 
-                    new_expected_confusion_matrix = (
-                        (new_pred_class_numbers[:,None]/
-                         float(len(posterior_probs)-1))*
-                        new_est_label_numbers[None,:])
-                    new_est_denominator = np.sum(
-                        new_expected_confusion_matrix*self.weights)
-                    new_est_numerator = (est_numerator
-                      - self.weights[example_pred_class,label_class_idx]) 
-                    new_est_kappa += label_class_prob*(1 - 
-                     (new_est_numerator/new_est_denominator))
-                expected_impact_abstentions.append(new_est_kappa - est_kappa) 
-            expected_impact_abstentions = np.array(expected_impact_abstentions) 
-            return expected_impact_abstentions
-        return abstaining_func
 
 
 class NegativeAbsLogLikelihoodRatio(AbstainerFactory):
@@ -1022,3 +963,788 @@ def find_best_mixing_coef(evaluation_func, scores1, scores2, stepsize):
             best_a = a
     return best_a
 
+
+def get_sorted_probs_and_indices(posterior_probs):
+    sorted_idx_and_probs = sorted(enumerate(posterior_probs),
+                                      key=lambda x: x[1])
+    indices = [x[0] for x in sorted_idx_and_probs]
+    sorted_probs = np.array([x[1] for x in sorted_idx_and_probs])
+    return (sorted_probs, indices)
+  
+
+def reorder_scores(unreordered_scores, indices):
+    to_return = np.zeros(len(unreordered_scores))
+    to_return[indices] = unreordered_scores
+    return to_return
+          
+          
+def pad_windowed_scores(signal, return_max_across_windows, window_size):
+
+    if (return_max_across_windows):
+        #return the maximum score across all windows that a particular
+        # index falls in
+        padded = np.array([-np.inf for i in range(window_size-1)]+
+                          list(signal)
+                          +[-np.inf for i in range(window_size-1)])
+        rolling = np.lib.stride_tricks.as_strided(
+            padded, shape=(len(signal)+(window_size-1),
+                           window_size),
+            strides=padded.strides + (padded.strides[-1],))
+        return np.max(rolling,axis=-1)
+    else:
+        #return score when a window *centered* at a particular index
+        # is abstained on
+        left_pad = int((window_size-1)/2.0)
+        right_pad = (window_size-1) - int((window_size-1)/2.0)
+        return np.array([signal[0] for i in range(left_pad)]
+                        + list(signal)
+                        + [signal[-1] for i in range(right_pad)])
+
+
+class MonteCarloSampler(AbstainerFactory):
+    
+    def __init__(self, n_samples, smoothing_window_size,
+                       return_max_across_windows=True,
+                       polyorder=1, seed=1):
+        self.rng = np.random.RandomState(seed)
+        self.n_samples = n_samples
+        self.smoothing_window_size = smoothing_window_size
+        self.polyorder = polyorder
+        
+    def sample(self, sorted_probs):
+        true_labels = 1.0*(self.rng.rand(*sorted_probs.shape)
+                           < sorted_probs)
+        return true_labels
+   
+    def postprocess_total_scores_marginalabst(self, total_scores, indices):
+        mean_scores = total_scores/self.n_samples
+        smoothed_mean_scores =\
+            self.smooth_signal(signal=mean_scores)
+        return reorder_scores(unreordered_scores=smoothed_mean_scores,
+                              indices=indices)
+    
+    def smooth_signal(self, signal):
+        if (self.smoothing_window_size is not None):
+            return scipy.signal.savgol_filter(
+                signal, window_length=self.smoothing_window_size,
+                polyorder=self.polyorder, mode='nearest')
+        else:
+            return signal
+      
+
+class MonteCarloSamplerWindowAbst(MonteCarloSampler):  
+     
+    def __init__(self, num_to_abstain_on,
+                       return_max_across_windows, **kwargs):
+        self.num_to_abstain_on = num_to_abstain_on
+        self.return_max_across_windows = return_max_across_windows
+        super(MonteCarloSamplerWindowAbst, self).__init__(**kwargs)        
+    
+    def postprocess_total_scores_windowabst(self, total_scores, indices):
+        mean_scores = total_scores/self.n_samples
+        #total_scores has length of len(indices)+1-window_size
+        #represents score when a window beginning at that index is abstained on
+        window_size = self.num_to_abstain_on
+        assert len(mean_scores) == (len(indices) + 1 - window_size), (
+                len(mean_scores), (len(indices) + 1 - window_size))
+        smoothed_scores = self.smooth_signal(signal=mean_scores)
+        unreordered_scores = pad_windowed_scores(
+            signal=smoothed_scores,
+            return_max_across_windows=self.return_max_across_windows,
+            window_size=window_size)
+        return reorder_scores(unreordered_scores=unreordered_scores,
+                              indices=indices)
+
+    def calculate_metric_deltas(self, labels, window_size):
+        raise NotImplementedError() 
+
+    def __call__(self, **kwargs):
+      
+        def abstaining_func(posterior_probs, uncertainties=None,
+                            embeddings=None):
+            (sorted_probs, indices) = get_sorted_probs_and_indices(
+                            posterior_probs=posterior_probs)
+            window_size = self.num_to_abstain_on
+            tot_metric_deltas = np.zeros((len(sorted_probs)+1)-window_size)       
+            
+            for sample_num in range(self.n_samples):
+                labels = self.sample(sorted_probs=sorted_probs)
+                tot_metric_deltas += self.calculate_metric_deltas(
+                    labels=labels, window_size=window_size)
+                
+            return self.postprocess_total_scores_windowabst(
+                total_scores=tot_metric_deltas, indices=indices)
+        
+        return abstaining_func
+
+
+class MonteCarloMarginalDeltaAuRoc(MonteCarloSampler):
+
+    def __init__(self, n_samples, smoothing_window_size, **kwargs):
+        super(MonteCarloMarginalDeltaAuRoc, self).__init__(
+            n_samples=n_samples, smoothing_window_size=smoothing_window_size,
+            **kwargs)
+
+    def __call__(self, **kwargs):
+
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            (sorted_probs, indices) = get_sorted_probs_and_indices(
+                                        posterior_probs=posterior_probs)
+            tot_auroc_deltas = np.zeros(len(sorted_probs))
+
+            for sample_num in range(self.n_samples):
+                labels = self.sample(sorted_probs=sorted_probs) 
+                pos_cumsum, neg_cumsum = get_pos_and_neg_cumsum(labels)
+                
+                tot_neg = neg_cumsum[-1]
+                tot_pos = pos_cumsum[-1]
+
+                frac_neg_lt = neg_cumsum/tot_neg  
+                frac_pos_gte = (tot_pos-pos_cumsum)/tot_pos
+                
+                tot_fracneglt_positives = np.sum(
+                    frac_neg_lt[:-1][labels==1.0])
+                tot_fracposgt_negatives = np.sum(
+                    frac_pos_gte[:-1][labels==0.0])
+                
+                delta_aurocs = np.zeros(len(labels)) 
+                delta_aurocs[labels==1.0] =(
+                    (tot_fracneglt_positives - frac_neg_lt[:-1][labels==1.0])/
+                    (tot_pos-1)) - (tot_fracneglt_positives/tot_pos)
+                delta_aurocs[labels==0.0] =(
+                    (tot_fracposgt_negatives - frac_pos_gte[:-1][labels==0.0])/
+                    (tot_neg-1)) - (tot_fracposgt_negatives/tot_neg)
+
+                tot_auroc_deltas += delta_aurocs
+            
+            return self.postprocess_total_scores_marginalabst(
+                total_scores=tot_auroc_deltas, indices=indices)
+
+        return abstaining_func
+      
+ 
+class MonteCarloWindowAbstDeltaTprAtFprThreshold(MonteCarloSamplerWindowAbst):
+
+    def __init__(self, n_samples, fpr_threshold, num_to_abstain_on,
+                       return_max_across_windows,
+                       smoothing_window_size, **kwargs):
+        self.fpr_threshold = fpr_threshold
+        super(MonteCarloWindowAbstDeltaTprAtFprThreshold, self).__init__(
+            n_samples=n_samples, smoothing_window_size=smoothing_window_size,
+            num_to_abstain_on=num_to_abstain_on,
+            return_max_across_windows=return_max_across_windows,
+            **kwargs)
+
+    def calculate_metric_deltas(self, labels, window_size):
+    
+        pos_cumsum, neg_cumsum = get_pos_and_neg_cumsum(labels)
+        tot_tpr_deltas = np.zeros((len(labels)+1)-window_size)
+        window_start_idx = np.arange((len(labels)+1)-window_size)
+        window_end_idx = window_start_idx+window_size
+
+        #identify the point of target tpr, with and without abstention 
+        totpos = float(pos_cumsum[-1])
+        totneg = float(neg_cumsum[-1])
+        
+        numneg_above = totneg - neg_cumsum
+        numpos_above = totpos - pos_cumsum
+        
+        #when negatives to the right are abstained on, the
+        # fpr gets better (i.e. decreases)
+        #Figure out num of negatives to the right that need to
+        # be evicted before given threshold dips below the target fpr
+        negtoright_eviction_needed = np.ceil(
+            np.maximum(numneg_above - self.fpr_threshold*totneg,0)/(
+            1 - self.fpr_threshold)).astype(int)  
+        
+        #find the earliest index threshold that satisfies the fpr
+        # requirement in the case of no eviction
+        noevict_thresh = next(x[0]
+         for x in enumerate(negtoright_eviction_needed)
+         if x[1]==0)
+        
+        #iterate down to find the new threshold when a given num to
+        # the right are evicted
+        thresh_with_negrightevic = np.full(window_size+1, np.nan)
+        curr_thresh = noevict_thresh
+        for negrightevic in range(window_size+1):
+            #decrement the threshold has far as possible while
+            # still satisfying the fpr constraint
+            while (curr_thresh > 0 and
+                   negtoright_eviction_needed[curr_thresh-1]
+                   <= negrightevic):
+                curr_thresh = curr_thresh - 1
+            thresh_with_negrightevic[negrightevic] = curr_thresh
+        assert thresh_with_negrightevic[0] == noevict_thresh
+        
+        #When negatives to the left are abstained on, fpr gets
+        # worse (i.e. increases)
+        #Figure out num of negatives to the left that could be
+        # evicted while still allowing the given threshold to
+        # satisfy the target fpr
+        negtoleft_eviction_tolerable = np.floor(
+          np.maximum(self.fpr_threshold*totneg - numneg_above,0)/(
+          self.fpr_threshold)).astype(int)
+        #iterate upwards to find the new threshold when a given num to
+        # the left are evicted
+        thresh_with_negleftevic = np.full(window_size+1, np.nan)
+        curr_thresh = noevict_thresh
+        for negleftevic in range(window_size+1):
+            #increment the threshold as needed until we satisfy
+            # the fpr constraint
+            while (curr_thresh < len(labels) and
+                   negtoleft_eviction_tolerable[curr_thresh]
+                   < negleftevic):
+                curr_thresh = curr_thresh + 1
+            thresh_with_negleftevic[negleftevic] = curr_thresh
+        assert thresh_with_negleftevic[0] == noevict_thresh
+
+        #compute the number of positives and negatives in each window
+        npos_in_window = (pos_cumsum[window_size:] -
+                          pos_cumsum[:-window_size]).astype("int")
+        nneg_in_window = window_size-npos_in_window
+        
+        #Figure out the threshold for each abstention window, based
+        # on the number of negatives abstained on
+        candidate_windowtoright_thresh =\
+          thresh_with_negrightevic[nneg_in_window]
+        candidate_windowtoleft_thresh =\
+          thresh_with_negleftevic[nneg_in_window]
+        
+        thresh_after_window_abst = (
+           ((candidate_windowtoright_thresh <= window_start_idx)*
+             candidate_windowtoright_thresh)
+          +((candidate_windowtoright_thresh > window_start_idx)*
+             np.maximum(candidate_windowtoleft_thresh,
+                        window_end_idx))).astype("int")
+        tpr_after_window_abst = (
+          (numpos_above[thresh_after_window_abst]-
+           npos_in_window*(thresh_after_window_abst <= window_start_idx)
+          )/(totpos - npos_in_window))
+
+        return tpr_after_window_abst - (numpos_above[noevict_thresh]/totpos)
+
+
+class MonteCarloSubsampleNaiveEval(MonteCarloSamplerWindowAbst):
+
+    def __init__(self, metric, num_to_subsample,
+                       **kwargs):
+        super(MonteCarloSubsampleNaiveEval, self).__init__(**kwargs)
+        self.metric = metric
+        self.num_to_subsample = num_to_subsample 
+
+    def __call__(self, **kwargs): #overwrite the default call
+        
+        def abstaining_func(posterior_probs, uncertainties=None,
+                            embeddings=None):
+            (sorted_probs, indices) = get_sorted_probs_and_indices(
+                            posterior_probs=posterior_probs)
+            all_windowstart_indices = np.arange(
+             len(sorted_probs)-self.num_to_abstain_on+1) 
+            #evenly subsample potential start indices
+            evensubsample_stride = int(len(all_windowstart_indices)/
+                                       self.num_to_subsample)
+            evensubsample_windowstart_indices =\
+                all_windowstart_indices[::evensubsample_stride]
+            evensubsample_abstintervals = [
+                (sorted_probs[i], sorted_probs[i+self.num_to_abstain_on-1])
+                for i in evensubsample_windowstart_indices] 
+            print("Subsampled",len(evensubsample_abstintervals),"intervals")
+
+            arange_allprobs = np.arange(len(sorted_probs))
+
+            totalscores_evensubsample_abstintervals =\
+                np.zeros(len(evensubsample_abstintervals))
+            for mc_sample in range(self.n_samples):
+                #take a subsample of this dataset for this mcit 
+                randomsubsample_indices_mcit = set(self.rng.choice(
+                    arange_allprobs,
+                    self.num_to_subsample, replace=False))
+                randomsubsample_booleanmask_mcit =\
+                    np.array([True if i in randomsubsample_indices_mcit
+                              else False for i in arange_allprobs])
+                #get random subset that's in sorted order
+                randomsubsample_sortedprobs_mcit =\
+                    sorted_probs[randomsubsample_booleanmask_mcit] 
+                randomsubsample_ytrue_mcit = self.sample(
+                    sorted_probs=randomsubsample_sortedprobs_mcit)
+                curr_metric = self.metric(
+                    y_score=randomsubsample_sortedprobs_mcit,
+                    y_true=randomsubsample_ytrue_mcit)
+
+                mcit_totalscores_evensubsample = []
+                for (abst_interval_start,
+                     abst_interval_end) in evensubsample_abstintervals:
+                    surviving_mask = np.array([
+                        True if (x<abst_interval_start or x>abst_interval_end)
+                        else False for x in randomsubsample_sortedprobs_mcit])
+                    surviving_sorted_probs =\
+                        randomsubsample_sortedprobs_mcit[surviving_mask] 
+                    surviving_sorted_ytrue =\
+                        randomsubsample_ytrue_mcit[surviving_mask]
+                    perf = self.metric(y_score=surviving_sorted_probs,
+                                       y_true=surviving_sorted_ytrue)
+                    mcit_totalscores_evensubsample.append(perf) 
+                totalscores_evensubsample_abstintervals += np.array(
+                                           mcit_totalscores_evensubsample)
+
+            #use linear interpolation between subsampled indices to get
+            # estimated perf at the indices that weren't sampled
+            onedinterpolator = interp1d(
+                x=evensubsample_windowstart_indices,
+                y=totalscores_evensubsample_abstintervals,
+                fill_value="extrapolate")
+            interpolated_sumabstinterval_to_perf = onedinterpolator(
+                all_windowstart_indices)
+
+            return self.postprocess_total_scores_windowabst(
+                total_scores=interpolated_sumabstinterval_to_perf,
+                indices=indices)
+
+        return abstaining_func
+
+
+def compute_auroc_delta(labels, window_size):
+    pos_cumsum, neg_cumsum = get_pos_and_neg_cumsum(labels)
+    totpos = float(pos_cumsum[-1])
+    totneg = float(neg_cumsum[-1])
+    sum_negcumsum = np.sum(neg_cumsum[1:]*labels)
+    curr_auroc = sum_negcumsum/(totneg*totpos)
+    
+    #compute the number of positives and negatives in each window
+    npos_in_window = (pos_cumsum[window_size:] -
+                      pos_cumsum[:-window_size])
+    nneg_in_window = window_size-npos_in_window
+    #also compute the sum of neg_cumsum*labels in each window
+    cumsum_negcumsum = zeroinfrontcumsum(neg_cumsum[1:]*labels)
+    negcumsum_in_window = (cumsum_negcumsum[window_size:] -
+                           cumsum_negcumsum[:-window_size])
+    
+    #Figure out how sum_negcumsum will be adjusted
+    # if a given window is left out. Basically, at each positive
+    # above the window, the neg_cumsum will be reduced by the
+    # number of negatives within the window.
+    numpos_above_window = totpos - pos_cumsum[window_size:]
+    adj_sum_negcumsum = (sum_negcumsum - negcumsum_in_window -
+     numpos_above_window*nneg_in_window)
+
+    #divide adj_sum_negcumsum by the adjusted totneg and totpos
+    # to get the new auroc
+    new_auroc = adj_sum_negcumsum/(
+      (totpos-npos_in_window)*(totneg-nneg_in_window))
+   
+    return new_auroc - curr_auroc 
+
+
+def compute_auprc_delta(labels, window_size):
+    pos_cumsum, neg_cumsum = get_pos_and_neg_cumsum(labels)
+    totpos = float(pos_cumsum[-1])
+    totneg = float(neg_cumsum[-1])
+
+    pos_above = totpos - pos_cumsum
+    neg_above = totneg - neg_cumsum
+
+    #compute the number of positives in each window
+    npos_in_window = (pos_cumsum[window_size:] -
+                      pos_cumsum[:-window_size])
+
+    indices = np.arange(len(labels))
+
+    precisions = pos_above[:-1]/(len(labels)-indices)
+    
+    precs_times_ispos = precisions*labels 
+    #Q is the average precision over positives
+    Q = np.sum(precs_times_ispos)/totpos
+    #Compute A and B
+    A = zeroinfrontcumsum(precs_times_ispos) 
+    B = A[window_size:] - A[:-window_size]
+    #Compute C, D and deltaA
+    C = zeroinfrontcumsum((window_size*precs_times_ispos[:-window_size])/(
+                          (len(labels)-indices-window_size)[:-window_size]))
+    D = zeroinfrontcumsum(labels[:-window_size]/
+         ((len(labels)-indices-window_size)[:-window_size]))
+    deltaA = C - npos_in_window*D
+    #Compute new_Q
+    new_Q = (Q*totpos + deltaA - B)/(totpos-npos_in_window)
+    return new_Q - Q 
+
+
+class MonteCarloWindowAbstDeltaAuroc(MonteCarloSamplerWindowAbst):
+
+    def calculate_metric_deltas(self, labels, window_size):
+        return compute_auroc_delta(labels=labels,
+                                   window_size=window_size)
+
+
+class MonteCarloWindowAbstDeltaAuprc(MonteCarloSamplerWindowAbst):
+
+    def calculate_metric_deltas(self, labels, window_size):
+        return compute_auprc_delta(labels=labels,
+                                   window_size=window_size)
+
+
+class EstWindowAbstDeltaMetric(AbstainerFactory):
+
+    def __init__(self, num_to_abstain_on, return_max_across_windows):
+        self.num_to_abstain_on = num_to_abstain_on
+        self.return_max_across_windows = return_max_across_windows
+
+    def calculate_metric_deltas(self, sorted_probs, window_size):
+        raise NotImplementedError()
+
+    def __call__(self, **kwargs):
+      
+        def abstaining_func(posterior_probs, uncertainties=None,
+                            embeddings=None):
+            (sorted_probs, indices) = get_sorted_probs_and_indices(
+                            posterior_probs=posterior_probs)
+            window_size = self.num_to_abstain_on
+            est_auroc_deltas = self.calculate_metric_deltas(
+                sorted_probs=sorted_probs, window_size=window_size) 
+            
+            return reorder_scores(
+                unreordered_scores=pad_windowed_scores(
+                  signal=est_auroc_deltas,
+                  return_max_across_windows=self.return_max_across_windows,
+                  window_size=window_size),
+                indices=indices)
+        return abstaining_func
+
+
+class EstWindowAbstDeltaAuroc(EstWindowAbstDeltaMetric):
+
+    def calculate_metric_deltas(self, sorted_probs, window_size):
+        return compute_auroc_delta(labels=sorted_probs,
+                                   window_size=window_size)
+
+
+class EstWindowAbstDeltaAuprc(EstWindowAbstDeltaMetric):
+
+    def calculate_metric_deltas(self, sorted_probs, window_size):
+        return compute_auprc_delta(labels=sorted_probs,
+                                   window_size=window_size)
+
+
+class MonteCarloMarginalDeltaRecallAtPrecisionThreshold(
+        MonteCarloSampler, AbstainerFactory):
+
+    def __init__(self, n_samples, precision_threshold,
+                       smoothing_window_size,
+                       polyorder=1, seed=1):
+        super(MonteCarloMarginalDeltaRecallAtPrecisionThreshold, self).__init__(
+            n_samples=n_samples, smoothing_window_size=smoothing_window_size,
+            polyorder=polyorder, seed=seed)
+        self.precision_threshold = precision_threshold
+
+    def __call__(self, **kwargs):
+
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            (sorted_probs, indices) = get_sorted_probs_and_indices(
+                            posterior_probs=posterior_probs)
+
+            tr_vec = np.arange((len(sorted_probs)+1))            
+            total_above = len(sorted_probs)-tr_vec
+            total_above_rightevict = np.maximum(total_above - 1.0, 1e-7)
+            
+            tot_recall_deltas = np.zeros(len(sorted_probs))
+            
+            for sample_num in range(self.n_samples):
+                labels = self.sample(sorted_probs=sorted_probs) 
+                pos_cumsum, neg_cumsum = get_pos_and_neg_cumsum(labels)
+                totpos = pos_cumsum[-1]
+                totneg = neg_cumsum[-1]
+                pos_above = totpos - pos_cumsum
+                neg_above = totneg - neg_cumsum
+                
+                if (totpos > 0.0 and totneg > 0.0):
+                    #identify the point of target precision,
+                    # with and without abstention
+                    precision_vec = pos_above/total_above
+                    recall_vec = pos_above/totpos
+                    precision_posrightevict_vec =(
+                       np.maximum(pos_above-1.0, 1e-7)/total_above_rightevict)
+                    precision_negrightevict_vec = (
+                       pos_above/total_above_rightevict)
+                    
+                    recall_posrightevict_vec = np.maximum(pos_above-1.0, 0.0)/(
+                        max(totpos - 1.0,1e-7))
+                    recall_posleftevict_vec = pos_above/(
+                        max(totpos - 1.0,1e-7))
+                    
+                    #take the earliest passing threshold
+                    precision_thresh = tr_vec[
+                     precision_vec >= self.precision_threshold][0]
+                    precision_posrightevict_thresh = tr_vec[
+                     precision_posrightevict_vec >= self.precision_threshold][0]                    
+                    precision_negrightevict_thresh = tr_vec[
+                        precision_negrightevict_vec >= self.precision_threshold
+                    ][0]
+                    
+                    assert precision_negrightevict_thresh <= precision_thresh
+                    assert precision_posrightevict_thresh >= precision_thresh
+                    
+                    #recall when different things are evicted
+                    recall_after_eviction = np.zeros(len(sorted_probs))
+                    
+                    #Abstaining on negatives can cause a shift in threshold.
+                    # precision_negrightevict_thresh is the new threshold at
+                    # which target precision is attained, assuming a negative to
+                    # the left has been abstained on. If a negative to the left
+                    # of precision_negrightevict_thresh is abstained on, there
+                    # is no shift in threshold and the new recall is the same as
+                    # the old recall.
+                    recall_after_eviction[
+                        (labels==0.0)*(tr_vec[:-1] < precision_negrightevict_thresh)
+                    ] = recall_vec[precision_thresh]
+                    recall_after_eviction[
+                        (labels==0.0)*(tr_vec[:-1] >= precision_negrightevict_thresh)
+                    ] = recall_vec[precision_negrightevict_thresh]
+                    # Abstaining on positives both changes the recall and,
+                    # if the positive is to the right of the new threshold,
+                    # affects where the new threshold is.
+                    recall_after_eviction[
+                        (labels==1.0)*(tr_vec[:-1] >= precision_posrightevict_thresh)
+                    ] = recall_posrightevict_vec[precision_posrightevict_thresh]
+                    recall_after_eviction[
+                        (labels==1.0)*(tr_vec[:-1] < precision_thresh)
+                    ] = recall_posleftevict_vec[precision_thresh]
+                    #recall for examples evicted in between
+                    # precision_thresh and precision_posrightevict_thresh
+                    # need to be calculated with care, because when the
+                    # threshold can move to the other side of the example
+                    # abstained on.
+                    tricky_range_recalls = np.zeros(
+                        precision_posrightevict_thresh-precision_thresh)
+                    i = precision_posrightevict_thresh-1
+                    while i >= precision_thresh:
+                      if (precision_vec[i+1] >= self.precision_threshold):
+                        tricky_range_recalls[
+                            i-precision_thresh] = recall_posleftevict_vec[i+1]
+                      else:
+                        tricky_range_recalls[i-precision_thresh] =\
+                         tricky_range_recalls[i+1-precision_thresh]
+                      i = i-1
+                    recall_after_eviction[
+                        (labels==1.0)
+                        *(tr_vec[:-1] >= precision_thresh)
+                        *(tr_vec[:-1] < precision_posrightevict_thresh)
+                    ] = tricky_range_recalls[(labels==1.0)[
+                        precision_thresh:precision_posrightevict_thresh]]
+                    
+                    recall_deltas =\
+                      recall_after_eviction - recall_vec[precision_thresh]    
+                    tot_recall_deltas += recall_deltas    
+                
+            return self.postprocess_total_scores_marginalabst(
+                total_scores=tot_recall_deltas, indices=indices)
+
+        return abstaining_func
+
+
+class EstMarginalWeightedKappa(AbstainerFactory):
+
+    def __init__(self, weights, mode,
+                       estimate_class_imbalance_from_valid=False,
+                       verbose=True):
+        self.weights = weights
+        self.mode=mode
+        self.estimate_class_imbalance_from_valid =\
+            estimate_class_imbalance_from_valid
+        self.verbose = verbose
+
+    def __call__(self, valid_labels=None, valid_posterior=None,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
+
+        #one-hot encoded validation labels expected
+        if (self.estimate_class_imbalance_from_valid):
+            assert valid_labels is not None
+            assert valid_posterior is not None
+            assert np.max(valid_labels)==1.0
+            assert valid_labels.shape[1]==self.weights.shape[1]
+            assert valid_labels.shape[1]==self.weights.shape[0]
+            assert valid_posterior.shape[1]==self.weights.shape[1]
+            assert valid_posterior.shape[1]==self.weights.shape[0]
+            valid_label_fractions =(
+                np.sum(valid_labels,axis=0)/float(valid_labels.shape[0]))
+            if (self.verbose):
+                print("validation set weighted kappa", 
+                       weighted_kappa_metric(
+                        predprobs=valid_posterior,
+                        true_labels=valid_labels,
+                        weights=self.weights, mode=self.mode))
+                print("validation set estimated weighted kappa from probs", 
+                       weighted_kappa_metric(
+                        predprobs=valid_posterior,
+                        true_labels=valid_posterior,
+                    weights=self.weights, mode=self.mode))
+
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            assert posterior_probs.shape[1]==self.weights.shape[1]
+            assert posterior_probs.shape[1]==self.weights.shape[0]
+            est_label_numbers = (valid_label_fractions*len(posterior_probs) 
+              if self.estimate_class_imbalance_from_valid
+              else np.sum(posterior_probs,axis=0))
+            predictions = get_weighted_kappa_predictions(
+                predprobs=posterior_probs, weights=self.weights,
+                mode=self.mode) 
+            pred_class_numbers = np.array([
+                np.sum(predictions==i)
+                for i in range(posterior_probs.shape[1])])
+            expected_confusion_matrix = (
+                (pred_class_numbers[:,None]/float(len(posterior_probs)))*
+                est_label_numbers[None,:])
+            est_denominator = np.sum(expected_confusion_matrix*self.weights)
+            est_numerator = np.sum([np.sum(self.weights[x]*y)
+                             for (x,y) in zip(predictions,
+                                              posterior_probs)])
+            est_kappa = (1 - (est_numerator/est_denominator))
+            
+            est_adj_denominator_term1 = np.sum((
+                (pred_class_numbers[:,None]/float(len(posterior_probs)-1))*
+                est_label_numbers[None,:])*self.weights)
+            est_adj_denominator_term2_vec = np.sum(
+                (1/float(len(posterior_probs)-1))*
+                 pred_class_numbers[None,:]*self.weights, axis=-1)
+            est_adj_denominator_term3_vec = np.sum(
+                (1/float(len(posterior_probs)-1))*
+                 est_label_numbers[None,:]*self.weights, axis=-1)
+
+            #compute the difference abtaining with each example 
+            expected_impact_abstentions = []
+            for example_pred_class,example in zip(predictions,posterior_probs):
+                new_est_kappa = 0
+                #iterate over each possible label class
+                for (label_class_idx,label_class_prob) in enumerate(example):
+                    new_est_numerator = (est_numerator
+                      - self.weights[example_pred_class,label_class_idx]) 
+                    new_est_denominator = (est_adj_denominator_term1
+                         - est_adj_denominator_term2_vec[label_class_idx]
+                         - est_adj_denominator_term3_vec[example_pred_class]                  
+                         + (self.weights[example_pred_class,label_class_idx]/
+                            float(len(posterior_probs)-1)))
+                    new_est_kappa += label_class_prob*(1 -
+                      (new_est_numerator/new_est_denominator))
+                expected_impact_abstentions.append(new_est_kappa - est_kappa) 
+            expected_impact_abstentions = np.array(expected_impact_abstentions) 
+            return expected_impact_abstentions
+        return abstaining_func
+
+
+class RecursiveEstMarginalWeightedKappa(AbstainerFactory):
+
+    def __init__(self, weights, mode,
+                       num_abstained_per_iter,
+                       verbose=True):
+        self.est_marginal_weighted_kappa_abstfunc = EstMarginalWeightedKappa(
+          weights=weights, mode=mode,
+          estimate_class_imbalance_from_valid=False,
+          verbose=verbose)()
+        self.num_abstained_per_iter = num_abstained_per_iter
+
+    def __call__(self, valid_labels=None, valid_posterior=None,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+            scores_to_return = np.zeros(len(posterior_probs))
+            retained_posterior_probs = np.array(posterior_probs)
+            retained_indices = np.arange(len(posterior_probs))
+            for iter_num in range(len(self.num_abstained_per_iter)):
+                priorities = self.est_marginal_weighted_kappa_abstfunc(
+                     posterior_probs=retained_posterior_probs)
+                num_to_abstain = self.num_abstained_per_iter[iter_num]
+                (sorted_priority_indices,
+                 sorted_priorities) = zip(*sorted(zip(retained_indices,
+                                                      priorities) ,
+                                                  key=lambda x: x[1]))
+                retained_indices = list(
+                    sorted_priority_indices[:-num_to_abstain])
+                retained_posterior_probs = posterior_probs[retained_indices]
+                abstained_indices = list(
+                    sorted_priority_indices[-num_to_abstain:])
+                scores_to_return[abstained_indices] =(
+                  #iteration-based offset
+                  (len(self.num_abstained_per_iter)-iter_num) 
+                   + np.array(sorted_priorities[-num_to_abstain:]))
+            #last iteration
+            priorities = self.est_marginal_weighted_kappa_abstfunc(
+                posterior_probs=retained_posterior_probs)
+            scores_to_return[retained_indices] = priorities
+            return scores_to_return
+        return abstaining_func
+      
+      
+class MonteCarloMarginalWeightedKappa(AbstainerFactory):
+
+    def __init__(self, weights, mode, n_samples, seed):
+        self.n_samples = n_samples
+        self.weights = weights
+        self.mode = mode
+        self.rng = np.random.RandomState(seed)
+        
+    def sample_labels(self, posterior_probs):      
+        sampled_labels = []
+        for posterior_prob_vec in posterior_probs:
+            sampled_labels.append(self.rng.multinomial(
+                n=1, pvals=posterior_prob_vec, size=1)[0])
+        return np.array(sampled_labels)
+        
+    def __call__(self, valid_labels=None, valid_posterior=None,
+                       valid_uncert=None, train_embeddings=None,
+                       train_labels=None):
+
+        def abstaining_func(posterior_probs,
+                            uncertainties=None,
+                            embeddings=None):
+          
+            tot_marginal_deltas = np.zeros(len(posterior_probs))
+            predictions = get_weighted_kappa_predictions(
+                predprobs=posterior_probs, weights=self.weights,
+                mode=self.mode)
+            pred_class_numbers = np.array([
+                np.sum(predictions==i)
+                for i in range(posterior_probs.shape[1])])
+            for sample_num in range(self.n_samples):
+                labels_onehot = self.sample_labels(
+                    posterior_probs=posterior_probs)
+                label_numbers = np.sum(labels_onehot, axis=0)
+                labels_int = np.argmax(labels_onehot, axis=-1)
+                expected_confusion_matrix = (
+                  (pred_class_numbers[:,None]/float(len(posterior_probs)))*
+                   label_numbers[None,:])
+                denominator = np.sum(expected_confusion_matrix*self.weights)
+                numerator = np.sum(
+                    [self.weights[x,y] for (x,y)
+                     in zip(predictions,labels_int)])
+                kappa = (1 - (numerator/denominator))
+                
+                adj_denominator_term1 = np.sum((
+                 (pred_class_numbers[:,None]/float(len(posterior_probs)-1))*
+                 label_numbers[None,:])*self.weights)
+                adj_denominator_term2_vec = np.sum(
+                 (1/float(len(posterior_probs)-1))*
+                  pred_class_numbers[None,:]*self.weights, axis=-1)
+                adj_denominator_term3_vec = np.sum(
+                 (1/float(len(posterior_probs)-1))*
+                 label_numbers[None,:]*self.weights, axis=-1)
+            
+                #compute the difference abtaining with each example 
+                new_numerators =\
+                  numerator - self.weights[(predictions, labels_int)]
+                new_denominators = (adj_denominator_term1
+                   - adj_denominator_term2_vec[labels_int]
+                   - adj_denominator_term3_vec[predictions]                  
+                   + (self.weights[(predictions, labels_int)]/
+                            float(len(posterior_probs)-1)))
+                new_kappas = (1 - (new_numerators/new_denominators))
+                tot_marginal_deltas += new_kappas - kappa
+            return tot_marginal_deltas/self.n_samples
+        return abstaining_func

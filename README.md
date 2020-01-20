@@ -1,15 +1,20 @@
 # Abstention
 
-Algorithms for computing abstention scores, performing calibration, and performing domain adaptation under label shift. This library provides functionality for abstaining on test examples that are likely misclassified. Some abstention methods require access to a validation set. It has been tested with Python 2.7. For more details, please refer to our paper
+Algorithms for computing abstention scores, performing calibration, and performing domain adaptation under label shift. 
 
-Shrikumar A\*†, Alexandari A\*, Kundaje A†, A Flexible and Adaptive Framework for Abstention Under Class Imbalance.
+Associated papers:
+
+Shrikumar A\* &dagger;, Alexandari A\*, Kundaje A &dagger;, [A Flexible and Adaptive Framework for Abstention Under Class Imbalance](https://arxiv.org/abs/1802.07024)
+
+Alexandari A\*, Kundaje A &dagger;, Shrikumar A\* &dagger;, [Adapting to Label Shift with Bias-Corrected Calibration](https://arxiv.org/abs/1901.06852)
+
 
 *co-first authors
-†co-corresponding authors
+&dagger; co-corresponding authors
 
 ## Examples
 
-See the examples folder for an IPython Notebook example.
+See [https://github.com/blindauth/abstention_experiments](https://github.com/blindauth/abstention_experiments) and [https://github.com/blindauth/labelshiftexperiments](https://github.com/blindauth/labelshiftexperiments) for colab notebooks reproducing the experiments in the papers. 
 
 ## Installation
 
@@ -21,8 +26,9 @@ pip install abstention
 
 If you have any questions, please contact:
 
-Amr Alexandari amr.alexandari@gmail.com
-
 Avanti Shrikumar avanti.shrikumar@gmail.com
 
+Amr Alexandari amr.alexandari@gmail.com
+
 Anshul Kundaje akundaje@stanford.edu
+

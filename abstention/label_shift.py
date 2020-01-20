@@ -78,20 +78,25 @@ class NoWeightShift(AbstractShiftWeightEstimator):
 
 class EMImbalanceAdapter(AbstractImbalanceAdapter):
 
-    def __init__(self, verbose=False,
+    def __init__(self, estimate_priors_from_valid_labels=False,
+                       verbose=False,
                        tolerance=1E-6,
                        max_iterations=100,
                        calibrator_factory=None,
                        initialization_weight_ratio=NoWeightShift()):
+        self.estimate_priors_from_valid_labels =\
+            estimate_priors_from_valid_labels
         self.verbose = verbose
         self.tolerance = tolerance
         self.calibrator_factory = calibrator_factory
         self.max_iterations = max_iterations
         self.initialization_weight_ratio = initialization_weight_ratio
 
-    def __call__(self, valid_labels,
-                       tofit_initial_posterior_probs,
-                       valid_posterior_probs):
+    #valid_labels are only needed if calibration is to be performed
+    # or if self.estimate_priors_from_valid_labels is True
+    def __call__(self, tofit_initial_posterior_probs,
+                       valid_posterior_probs,
+                       valid_labels=None):
 
         #if binary labels were provided, convert to softmax format
         # for consistency
@@ -110,21 +115,25 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
       
         #fit calibration if needed
         if (self.calibrator_factory is not None):
-            assert valid_posterior_probs is not None 
+            assert softmax_valid_posterior_probs is not None 
             calibrator_func = self.calibrator_factory(
                 valid_preacts=softmax_valid_posterior_probs,
                 valid_labels=softmax_valid_labels,
                 posterior_supplied=True) 
         else:
             calibrator_func = lambda x: x
-        valid_posterior_probs = calibrator_func(valid_posterior_probs)
+        softmax_valid_posterior_probs = calibrator_func(softmax_valid_posterior_probs)
         tofit_initial_posterior_probs = calibrator_func(
             tofit_initial_posterior_probs)
 
-        #compute the class frequencies based on the posterior probs to ensure
-        # that if the valid posterior probs are supplied for "to fit", then
-        # no shift is estimated
-        valid_class_freq = np.mean(softmax_valid_posterior_probs, axis=0)
+        if (self.estimate_priors_from_valid_labels):
+            valid_class_freq = np.mean(valid_labels, axis=0)
+        else:
+            #compute the class frequencies based on the posterior probs to ensure
+            # that if the valid posterior probs are supplied for "to fit", then
+            # no shift is estimated
+            valid_class_freq = np.mean(softmax_valid_posterior_probs, axis=0)
+
         if (self.verbose):
             print("Original class freq", valid_class_freq)
 
@@ -181,6 +190,103 @@ class EMImbalanceAdapter(AbstractImbalanceAdapter):
         return PriorShiftAdapterFunc(
                     multipliers=(current_iter_class_freq/valid_class_freq),
                     calibrator_func=calibrator_func)
+
+
+class RLLSImbalanceAdapter(AbstractImbalanceAdapter):
+
+    def __init__(self, soft=False,
+                       calibrator_factory=None,
+                       #default value of alpha comes from https://github.com/Angela0428/labelshift/blob/5bbe517938f4e3f5bd14c2c105de973dcc2e0917/label_shift.py#L455
+                       alpha=0.01,
+                       verbose=False):
+        self.soft = soft
+        self.alpha = alpha
+        self.calibrator_factory = calibrator_factory
+        self.verbose = verbose
+
+    #based on: https://github.com/Angela0428/labelshift/blob/5bbe517938f4e3f5bd14c2c105de973dcc2e0917/label_shift.py#L184
+    def compute_3deltaC(self, n_class, n_train, delta):
+        rho = 3*(2*np.log(2*n_class/delta)/(3*n_train)
+                 + np.sqrt(2*np.log(2*n_class/delta)/n_train))
+        return rho 
+
+    #based on: https://github.com/Angela0428/labelshift/blob/5bbe517938f4e3f5bd14c2c105de973dcc2e0917/label_shift.py#L123
+    def compute_w_opt(self, C_yy, mu_y, mu_train_y, rho):
+        import cvxpy as cp
+        n = C_yy.shape[0]
+        theta = cp.Variable(n)
+        b = mu_y - mu_train_y
+        objective = cp.Minimize(cp.pnorm(C_yy*theta - b) + rho* cp.pnorm(theta))
+        constraints = [-1 <= theta]
+        prob = cp.Problem(objective, constraints)
+
+        # The optimal objective value is returned by `prob.solve()`.
+        result = prob.solve()
+        # The optimal value for x is stored in `x.value`.
+        # print(theta.value)
+        w = 1 + theta.value
+        if (self.verbose):
+            print('Estimated w is', w)
+        return w 
+
+    def __call__(self, valid_labels, tofit_initial_posterior_probs,
+                       valid_posterior_probs):
+ 
+        if (self.calibrator_factory is not None):
+            calibrator_func = self.calibrator_factory(
+                valid_preacts=valid_posterior_probs,
+                valid_labels=valid_labels,
+                posterior_supplied=True) 
+        else:
+            calibrator_func = lambda x: x
+
+        valid_posterior_probs =\
+            calibrator_func(valid_posterior_probs)
+        tofit_initial_posterior_probs =\
+            calibrator_func(tofit_initial_posterior_probs)
+
+        #hard_tofit_preds binarizes tofit_initial_posterior_probs
+        # according to the argmax predictions
+        hard_tofit_preds = get_hard_preds(
+            softmax_preds=tofit_initial_posterior_probs)
+        hard_valid_preds = get_hard_preds(
+            softmax_preds=valid_posterior_probs)
+
+        if (self.soft):
+            mu_y = np.mean(tofit_initial_posterior_probs, axis=0) 
+        else:
+            mu_y = np.mean(hard_tofit_preds, axis=0) 
+
+        if (self.soft):
+            mu_train_y = np.mean(valid_posterior_probs, axis=0) 
+        else:
+            mu_train_y = np.mean(hard_valid_preds, axis=0) 
+
+        #prepare the "confusion" matrix (confusingly named as confusion
+        # matrices are usually normalized, but theirs isn't)
+        if (self.soft):
+            C_yy = np.mean((
+                valid_posterior_probs[:,:,None]*
+                valid_labels[:,None,:]), axis=0)
+        else:
+            C_yy = np.mean((hard_valid_preds[:,:,None]*
+                            valid_labels[:,None,:]),axis=0) 
+
+        n_class = C_yy.shape[0]  
+        m_train = len(valid_posterior_probs)
+        #from https://github.com/Angela0428/labelshift/blob/5bbe517938f4e3f5bd14c2c105de973dcc2e0917/label_shift.py#L453
+        rho = self.compute_3deltaC(n_class=n_class,
+                                   n_train=m_train,
+                                   delta=0.05)
+        weights = self.compute_w_opt(
+            C_yy=C_yy,
+            mu_y=mu_y,
+            mu_train_y=mu_train_y,
+            rho=self.alpha*rho)
+         
+        return PriorShiftAdapterFunc(
+                    multipliers=weights,
+                    calibrator_func=calibrator_func)
         
 
 class BBSEImbalanceAdapter(AbstractImbalanceAdapter):
@@ -219,7 +325,7 @@ class BBSEImbalanceAdapter(AbstractImbalanceAdapter):
             muhat_yhat = np.mean(hard_tofit_preds, axis=0) 
 
         #prepare the "confusion" matrix (confusingly named as confusion
-        # matrices are usually normalized, but theirs isn't
+        # matrices are usually normalized, but theirs isn't)
         if (self.soft):
             confusion_matrix = np.mean((
                 valid_posterior_probs[:,:,None]*

@@ -1,4 +1,5 @@
 README.md
+setup.py
 abstention/__init__.py
 abstention/abstention.py
 abstention/calibration.py
@@ -11,3 +12,4 @@ abstention.egg-info/dependency_links.txt
 abstention.egg-info/requires.txt
 abstention.egg-info/top_level.txt
 test/test_marginals.py
+test/test_windowabst_func.py

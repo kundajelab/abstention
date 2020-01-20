@@ -1,4 +1,4 @@
-# Abstention
+# Abstention, Calibration & Label Shift
 
 Algorithms for abstention, calibration and domain adaptation under label shift. 
 

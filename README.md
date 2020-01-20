@@ -33,8 +33,8 @@ For calibration:
 
 For domain adaptation to label shift:
 - Expectation Maximization (Saerens et al., 2002)
-- Black-Box Shift Learning (BBSL; Lipton et al., 2018)
-- Regularized Learning under Label Shifts (RLLS; Azizzadenesheli et al., 2019)
+- Black-Box Shift Learning (BBSL) (Lipton et al., 2018)
+- Regularized Learning under Label Shifts (RLLS) (Azizzadenesheli et al., 2019)
 
 For abstention:
 - Metric-specific abstention methods described in [A Flexible and Adaptive Framework for Abstention Under Class Imbalance](https://arxiv.org/abs/1802.07024), including abstention to optimize auROC, auPRC, sensitivity at a target specificity and weighted Cohen's Kappa

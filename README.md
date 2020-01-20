@@ -1,6 +1,6 @@
 # Abstention
 
-Algorithms for computing abstention scores, performing calibration, and performing domain adaptation under label shift. 
+Algorithms for abstention, calibration and domain adaptation under label shift. 
 
 Associated papers:
 

@@ -48,9 +48,9 @@ For abstention:
 
 If you have any questions, please contact:
 
-Avanti Shrikumar avanti [dot] shrikumar [at] gmail.com
+Avanti Shrikumar: avanti [dot] shrikumar [at] gmail.com
 
-Amr Alexandari amr [dot] alexandari [at] gmail.com
+Amr Alexandari: amr [dot] alexandari [at] gmail.com
 
-Anshul Kundaje akundaje [at] stanford [dot] edu
+Anshul Kundaje: akundaje [at] stanford [dot] edu
 

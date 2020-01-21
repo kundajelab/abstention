@@ -1,6 +1,6 @@
 # Abstention, Calibration & Label Shift
 
-Algorithms for abstention, calibration and domain adaptation under label shift. 
+Algorithms for abstention, calibration and domain adaptation to label shift. 
 
 Associated papers:
 

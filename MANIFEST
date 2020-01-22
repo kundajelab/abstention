@@ -7,3 +7,4 @@ abstention/figure_making_utils.py
 abstention/label_shift.py
 abstention/util.py
 test/test_marginals.py
+test/test_windowabst_func.py

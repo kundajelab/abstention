@@ -6,7 +6,7 @@ Associated papers:
 
 Shrikumar A\*&dagger;, Alexandari A\*, Kundaje A&dagger;, [A Flexible and Adaptive Framework for Abstention Under Class Imbalance](https://arxiv.org/abs/1802.07024)
 
-Alexandari A\*, Kundaje A&dagger;, Shrikumar A\*&dagger;, [Adapting to Label Shift with Bias-Corrected Calibration](https://arxiv.org/abs/1901.06852)
+Alexandari A\*, Kundaje A&dagger;, Shrikumar A\*&dagger;, [Maximum Likelihood with Bias-Corrected Calibration is Hard-To-Beat at Label Shift Adaptation](https://arxiv.org/abs/1901.06852)
 
 *co-first authors
 &dagger; co-corresponding authors
